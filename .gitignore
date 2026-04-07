@@ -1,0 +1,7 @@
+# Ignorar carpetas de compilación y temporales
+/build/
+.dart_tool/
+.packages
+.pub/
+ios/Flutter/Generated.xcconfig
+android/local.properties
