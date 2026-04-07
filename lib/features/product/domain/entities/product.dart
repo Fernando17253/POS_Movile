@@ -1,9 +1,12 @@
 import 'package:equatable/equatable.dart';
 
+const _noChange = Object();
+
 class Product extends Equatable {
   final String id;
+  final String internalCode;
   final String name;
-  final String barcode;
+  final String? barcode;
 
   // Datos de apoyo
   final String? brand;
@@ -23,8 +26,9 @@ class Product extends Equatable {
 
   const Product({
     required this.id,
+    required this.internalCode,
     required this.name,
-    required this.barcode,
+    this.barcode,
     required this.price,
     this.brand,
     this.imageUrl,
@@ -39,11 +43,12 @@ class Product extends Equatable {
 
   Product copyWith({
     String? id,
+    String? internalCode,
     String? name,
-    String? barcode,
-    String? brand,
-    String? imageUrl,
-    String? categoryId,
+    Object? barcode = _noChange,
+    Object? brand = _noChange,
+    Object? imageUrl = _noChange,
+    Object? categoryId = _noChange,
     double? price,
     double? cost,
     double? stock,
@@ -54,11 +59,12 @@ class Product extends Equatable {
   }) {
     return Product(
       id: id ?? this.id,
+      internalCode: internalCode ?? this.internalCode,
       name: name ?? this.name,
-      barcode: barcode ?? this.barcode,
-      brand: brand ?? this.brand,
-      imageUrl: imageUrl ?? this.imageUrl,
-      categoryId: categoryId ?? this.categoryId,
+      barcode: barcode == _noChange ? this.barcode : barcode as String?,
+      brand: brand == _noChange ? this.brand : brand as String?,
+      imageUrl: imageUrl == _noChange ? this.imageUrl : imageUrl as String?,
+      categoryId: categoryId == _noChange ? this.categoryId : categoryId as String?,
       price: price ?? this.price,
       cost: cost ?? this.cost,
       stock: stock ?? this.stock,
@@ -72,6 +78,7 @@ class Product extends Equatable {
   @override
   List<Object?> get props => [
         id,
+        internalCode,
         name,
         barcode,
         brand,

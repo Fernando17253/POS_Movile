@@ -25,10 +25,31 @@ class ProductRepositoryImpl implements ProductRepository {
   Future<Either<Failure, Product>> getProductByBarcode(String barcode) async {
     try {
       final box = HiveDatabase.productBox;
+      final normalizedBarcode = barcode.trim();
 
       final productModel = box.values.firstWhere(
-        (element) => element.barcode == barcode,
-        orElse: () => throw Exception('Product not found'),
+        (element) => (element.barcode ?? '').trim() == normalizedBarcode,
+        orElse: () => throw Exception('Producto no encontrado'),
+      );
+
+      return Right(productModel.toEntity());
+    } catch (e) {
+      return Left(CacheFailure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, Product>> getProductByInternalCode(
+    String internalCode,
+  ) async {
+    try {
+      final box = HiveDatabase.productBox;
+      final normalizedInternalCode = internalCode.trim().toUpperCase();
+
+      final productModel = box.values.firstWhere(
+        (element) =>
+            element.internalCode.trim().toUpperCase() == normalizedInternalCode,
+        orElse: () => throw Exception('Producto no encontrado'),
       );
 
       return Right(productModel.toEntity());

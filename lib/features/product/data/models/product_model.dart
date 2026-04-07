@@ -12,7 +12,7 @@ class ProductModel extends HiveObject {
   final String name;
 
   @HiveField(2)
-  final String barcode;
+  final String? barcode;
 
   @HiveField(3)
   final double price;
@@ -44,10 +44,13 @@ class ProductModel extends HiveObject {
   @HiveField(12)
   final String source;
 
+  @HiveField(13)
+  final String internalCode;
+
   ProductModel({
     required this.id,
     required this.name,
-    required this.barcode,
+    this.barcode,
     required this.price,
     required this.stock,
     this.brand,
@@ -58,11 +61,13 @@ class ProductModel extends HiveObject {
     this.unitType = 'piece',
     this.isWeighable = false,
     this.source = 'manual',
+    this.internalCode = '',
   });
 
   Product toEntity() {
     return Product(
       id: id,
+      internalCode: internalCode.isNotEmpty ? internalCode : (barcode ?? id),
       name: name,
       barcode: barcode,
       price: price,
@@ -81,6 +86,7 @@ class ProductModel extends HiveObject {
   factory ProductModel.fromEntity(Product product) {
     return ProductModel(
       id: product.id,
+      internalCode: product.internalCode,
       name: product.name,
       barcode: product.barcode,
       price: product.price,

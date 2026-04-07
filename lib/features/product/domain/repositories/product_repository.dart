@@ -5,6 +5,7 @@ import '../../domain/entities/product.dart';
 abstract class ProductRepository {
   Future<Either<Failure, List<Product>>> getProducts();
   Future<Either<Failure, Product>> getProductByBarcode(String barcode);
+  Future<Either<Failure, Product>> getProductByInternalCode(String internalCode);
   Future<Either<Failure, void>> addProduct(Product product);
   Future<Either<Failure, void>> updateProduct(Product product);
   Future<Either<Failure, void>> deleteProduct(String id);

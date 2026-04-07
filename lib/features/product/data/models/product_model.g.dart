@@ -19,7 +19,7 @@ class ProductModelAdapter extends TypeAdapter<ProductModel> {
     return ProductModel(
       id: fields[0] as String,
       name: fields[1] as String,
-      barcode: fields[2] as String,
+      barcode: fields[2] as String?,
       price: fields[3] as double,
       stock: fields[4] as double,
       brand: fields[5] as String?,
@@ -30,13 +30,14 @@ class ProductModelAdapter extends TypeAdapter<ProductModel> {
       unitType: fields[10] as String,
       isWeighable: fields[11] as bool,
       source: fields[12] as String,
+      internalCode: fields[13] as String,
     );
   }
 
   @override
   void write(BinaryWriter writer, ProductModel obj) {
     writer
-      ..writeByte(13)
+      ..writeByte(14)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -62,7 +63,9 @@ class ProductModelAdapter extends TypeAdapter<ProductModel> {
       ..writeByte(11)
       ..write(obj.isWeighable)
       ..writeByte(12)
-      ..write(obj.source);
+      ..write(obj.source)
+      ..writeByte(13)
+      ..write(obj.internalCode);
   }
 
   @override

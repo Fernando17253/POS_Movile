@@ -39,20 +39,22 @@ final router = GoRouter(
           path: 'barcode-entry',
           builder: (context, state) => const ProductBarcodeEntryPage(),
         ),
-        GoRoute(
-          path: 'add',
-          builder: (context, state) {
-            final extra = state.extra as Map<String, dynamic>?;
+GoRoute(
+  path: 'add',
+  builder: (context, state) {
+    final extra = state.extra as Map<String, dynamic>?;
 
-            return AddProductPage(
-              initialBarcode: extra?['barcode'] as String?,
-              initialName: extra?['name'] as String?,
-              initialBrand: extra?['brand'] as String?,
-              initialImageUrl: extra?['imageUrl'] as String?,
-              source: (extra?['source'] as String?) ?? 'manual',
-            );
-          },
-        ),
+    return AddProductPage(
+      initialBarcode: extra?['barcode'] as String?,
+      initialInternalCode: extra?['internalCode'] as String?,
+      initialName: extra?['name'] as String?,
+      initialBrand: extra?['brand'] as String?,
+      initialImageUrl: extra?['imageUrl'] as String?,
+      source: (extra?['source'] as String?) ?? 'manual',
+      withoutBarcode: (extra?['withoutBarcode'] as bool?) ?? false,
+    );
+  },
+),
         GoRoute(
           path: 'edit/:id',
           builder: (context, state) {
