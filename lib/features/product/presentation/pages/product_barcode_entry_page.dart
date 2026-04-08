@@ -225,7 +225,7 @@ class _ProductBarcodeEntryPageState extends State<ProductBarcodeEntryPage> {
                       ),
                       child: IconButton(
                         icon: const Icon(
-                          Icons.qr_code_scanner,
+                          Icons.barcode_reader,
                           color: AppTheme.primaryColor,
                         ),
                         onPressed: _scanBarcode,

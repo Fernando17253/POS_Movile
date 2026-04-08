@@ -1,7 +1,11 @@
+import 'package:billing_app/features/sales/data/repositories/sales_repository_impl.dart';
+import 'package:billing_app/features/sales/domain/entities/sale.dart';
+import 'package:billing_app/features/sales/domain/entities/sale_item.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:billing_app/core/theme/app_theme.dart';
+import 'package:billing_app/core/widgets/primary_button.dart';
 
 import '../bloc/billing_bloc.dart';
 
@@ -13,8 +17,29 @@ class CheckoutPage extends StatefulWidget {
 }
 
 class _CheckoutPageState extends State<CheckoutPage> {
+  final TextEditingController _amountReceivedController =
+      TextEditingController();
+  final TextEditingController _transferReferenceController =
+      TextEditingController();
+
+  final ValueNotifier<double> _sheetExtent = ValueNotifier(0.10);
+  final _salesRepository = SalesRepositoryImpl();
+
+  String _paymentMethod = 'cash'; // cash | transfer
+  bool _isSavingSale = false;
+
   String _formatCurrency(double value) {
     return '\$${value.toStringAsFixed(2)} MXN';
+  }
+
+  double _parseDouble(String value) {
+    return double.tryParse(value.trim().replaceAll(',', '.')) ?? 0;
+  }
+
+  double _calculateChange(double total) {
+    if (_paymentMethod != 'cash') return 0;
+    final received = _parseDouble(_amountReceivedController.text);
+    return received - total;
   }
 
   Future<void> _confirmCancelSale() async {
@@ -49,20 +74,112 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
   }
 
-  String _translateBillingError(String error) {
-    if (error.startsWith('Product not found')) {
-      return 'Producto no encontrado.';
+  Future<void> _confirmSale(BillingState billingState) async {
+    if (billingState.cartItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No hay productos en la venta.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
     }
-    if (error.startsWith('Failed to auto-connect to printer')) {
-      return 'No se pudo conectar automáticamente a la impresora.';
+
+    final total = billingState.totalAmount;
+    final amountReceived = _parseDouble(_amountReceivedController.text);
+    final change = _calculateChange(total);
+
+    if (_paymentMethod == 'cash') {
+      if (_amountReceivedController.text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Ingresa el monto recibido.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      if (amountReceived < total) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('El monto recibido no cubre el total de la venta.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
     }
-    if (error.startsWith('Printer not connected')) {
-      return 'No hay impresora conectada ni guardada.';
-    }
-    if (error.startsWith('Print failed')) {
-      return 'La impresión falló.';
-    }
-    return error;
+
+    setState(() {
+      _isSavingSale = true;
+    });
+
+    final sale = Sale(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      createdAt: DateTime.now(),
+      items: billingState.cartItems.map((item) {
+        return SaleItem(
+          productId: item.product.id,
+          productName: item.product.name,
+          internalCode: item.product.internalCode,
+          barcode: item.product.barcode,
+          imageUrl: item.product.imageUrl,
+          unitType: item.product.unitType,
+          quantity: item.quantity,
+          unitPrice: item.product.price,
+          total: item.total,
+        );
+      }).toList(),
+      subtotal: total,
+      discount: 0,
+      total: total,
+      paymentMethod: _paymentMethod,
+      amountReceived: _paymentMethod == 'cash' ? amountReceived : null,
+      changeAmount: _paymentMethod == 'cash' ? change : null,
+      transferReference: _paymentMethod == 'transfer'
+          ? (_transferReferenceController.text.trim().isEmpty
+              ? null
+              : _transferReferenceController.text.trim())
+          : null,
+    );
+
+    final result = await _salesRepository.saveSale(sale);
+
+    if (!mounted) return;
+
+    setState(() {
+      _isSavingSale = false;
+    });
+
+    result.fold(
+      (failure) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No se pudo guardar la venta: ${failure.message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      },
+      (_) {
+        context.read<BillingBloc>().add(ClearCartEvent());
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Venta guardada correctamente.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        context.go('/');
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _amountReceivedController.dispose();
+    _transferReferenceController.dispose();
+    _sheetExtent.dispose();
+    super.dispose();
   }
 
   @override
@@ -97,53 +214,30 @@ class _CheckoutPageState extends State<CheckoutPage> {
           ),
         ],
       ),
-      body: BlocConsumer<BillingBloc, BillingState>(
-        listener: (context, state) {
-          if (state.error != null) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(_translateBillingError(state.error!)),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-        },
+      body: BlocBuilder<BillingBloc, BillingState>(
         builder: (context, billingState) {
           return LayoutBuilder(
             builder: (context, constraints) {
-              final isWide = constraints.maxWidth >= 980;
-              final floatingCardWidth = isWide ? 340.0 : constraints.maxWidth - 24;
-              final rightInsetForList = isWide ? floatingCardWidth + 32 : 0.0;
-              final bottomInsetForList = isWide ? 16.0 : 250.0;
+              return ValueListenableBuilder<double>(
+                valueListenable: _sheetExtent,
+                builder: (context, extent, _) {
+                  final bottomInset = (constraints.maxHeight * extent) + 24;
 
-              return Stack(
-                children: [
-                  Positioned.fill(
-                    child: _buildProductsSummary(
-                      billingState,
-                      borderColor,
-                      rightInset: rightInsetForList,
-                      bottomInset: bottomInsetForList,
-                    ),
-                  ),
-                  if (isWide)
-                    Positioned(
-                      top: 16,
-                      right: 16,
-                      width: floatingCardWidth,
-                      child: _buildFloatingTotalsCard(billingState),
-                    )
-                  else
-                    Positioned(
-                      left: 12,
-                      right: 12,
-                      bottom: 12,
-                      child: SafeArea(
-                        top: false,
-                        child: _buildFloatingTotalsCard(billingState),
+                  return Stack(
+                    children: [
+                      Positioned.fill(
+                        child: _buildProductsSummary(
+                          billingState,
+                          borderColor,
+                          bottomInset: bottomInset,
+                        ),
                       ),
-                    ),
-                ],
+                      _buildPaymentSheet(
+                        billingState: billingState,
+                      ),
+                    ],
+                  );
+                },
               );
             },
           );
@@ -155,7 +249,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
   Widget _buildProductsSummary(
     BillingState billingState,
     Color borderColor, {
-    double rightInset = 0,
     double bottomInset = 0,
   }) {
     if (billingState.cartItems.isEmpty) {
@@ -177,7 +270,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
               padding: EdgeInsets.fromLTRB(
                 16,
                 16,
-                16 + rightInset,
+                16,
                 16 + bottomInset,
               ),
               itemCount: billingState.cartItems.length,
@@ -263,79 +356,296 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
-  Widget _buildFloatingTotalsCard(BillingState billingState) {
-    final subtotal = billingState.totalAmount;
-    final total = billingState.totalAmount;
-    final totalItems = billingState.cartItems.fold<int>(
-      0,
-      (sum, item) => sum + item.quantity,
-    );
+  Widget _buildPaymentSheet({
+    required BillingState billingState,
+  }) {
+    return NotificationListener<DraggableScrollableNotification>(
+      onNotification: (notification) {
+        final next = notification.extent;
+        if ((next - _sheetExtent.value).abs() > 0.008) {
+          _sheetExtent.value = next;
+        }
+        return true;
+      },
+      child: DraggableScrollableSheet(
+initialChildSize: 0.54,
+minChildSize: 0.10,
+maxChildSize: 0.82,
+snap: true,
+snapSizes: const [0.10, 0.54, 0.82],        builder: (context, scrollController) {
+          final extent = _sheetExtent.value;
+final isHidden = extent <= 0.16;
+final isSemi = extent > 0.16 && extent < 0.66;
+final isFull = extent >= 0.66;
+          final total = billingState.totalAmount;
+          final totalItems = billingState.cartItems.fold<int>(
+            0,
+            (sum, item) => sum + item.quantity,
+          );
+          final change = _calculateChange(total);
 
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.98),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFE5E5EA)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.08),
-              blurRadius: 18,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Totales',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
+          return Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(24),
               ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '$totalItems artículos en la venta',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[600],
-              ),
-            ),
-            const SizedBox(height: 14),
-            _summaryRow('Subtotal', _formatCurrency(subtotal)),
-            const SizedBox(height: 8),
-            _summaryRow('Descuentos', _formatCurrency(0)),
-            const SizedBox(height: 10),
-            const Divider(height: 1),
-            const SizedBox(height: 10),
-            _summaryRow(
-              'Total a cobrar',
-              _formatCurrency(total),
-              isTotal: true,
-            ),
-            const SizedBox(height: 14),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppTheme.primaryColor.withValues(alpha: 0.06),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Text(
-                'El ticket y los datos de la tienda se generarán desde el historial de ventas.',
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.4,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.12),
+                  blurRadius: 14,
+                  offset: const Offset(0, -4),
                 ),
-              ),
+              ],
             ),
-          ],
+            child: CustomScrollView(
+              controller: scrollController,
+              physics: const ClampingScrollPhysics(),
+              slivers: [
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+                    child: Column(
+                      children: [
+                        Container(
+                          width: 46,
+                          height: 5,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.withValues(alpha: 0.35),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        AnimatedOpacity(
+                          opacity: isHidden ? 1 : 0,
+                          duration: const Duration(milliseconds: 140),
+                          child: const Text(
+                            'Desliza para ver cobro',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                if (!isHidden)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                      child: AnimatedSize(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOut,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+const Text(
+  'Cobro',
+  style: TextStyle(
+    fontSize: 18,
+    fontWeight: FontWeight.w800,
+  ),
+),
+if (isFull) ...[
+  const SizedBox(height: 3),
+  Text(
+    '$totalItems artículos en la venta',
+    style: TextStyle(
+      fontSize: 12,
+      color: Colors.grey[600],
+    ),
+  ),
+],
+const SizedBox(height: 14),
+                            if (isFull) ...[
+                              _summaryRow('Subtotal', _formatCurrency(total)),
+                              const SizedBox(height: 8),
+                              _summaryRow('Descuentos', _formatCurrency(0)),
+                              const SizedBox(height: 10),
+                              const Divider(height: 1),
+                              const SizedBox(height: 10),
+                            ],
+
+                            _summaryRow(
+                              'Total a cobrar',
+                              _formatCurrency(total),
+                              isTotal: true,
+                            ),
+
+                            const SizedBox(height: 16),
+
+                            if (isFull) ...[
+                              const Text(
+                                'Método de pago',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                children: [
+ChoiceChip(
+  label: const Text('Efectivo'),
+  selected: _paymentMethod == 'cash',
+  onSelected: (_) {
+    setState(() {
+      _paymentMethod = 'cash';
+    });
+  },
+),
+ChoiceChip(
+  label: const Text('Transferencia'),
+  selected: _paymentMethod == 'transfer',
+  onSelected: (_) {
+    setState(() {
+      _paymentMethod = 'transfer';
+    });
+  },
+),
+ChoiceChip(
+  label: const Text('Tarjeta / Point'),
+  selected: _paymentMethod == 'point',
+  onSelected: (_) {
+    setState(() {
+      _paymentMethod = 'point';
+    });
+  },
+),
+                                ],
+                              ),
+                              const SizedBox(height: 14),
+                            ] else ...[
+  Row(
+    children: [
+      Expanded(
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 8,
+          ),
+          decoration: BoxDecoration(
+            color: AppTheme.primaryColor.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+_paymentMethod == 'cash'
+    ? 'Método: Efectivo'
+    : _paymentMethod == 'transfer'
+        ? 'Método: Transferencia'
+        : 'Método: Tarjeta / Point',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ),
+      ),
+    ],
+  ),
+  const SizedBox(height: 12),
+],
+
+if (_paymentMethod == 'cash') ...[
+  TextField(
+    controller: _amountReceivedController,
+    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+    onChanged: (_) => setState(() {}),
+    decoration: const InputDecoration(
+      labelText: 'Monto recibido',
+      hintText: '0.00',
+      prefixText: '\$ ',
+    ),
+  ),
+  const SizedBox(height: 12),
+  _summaryRow(
+    'Cambio',
+    change >= 0 ? _formatCurrency(change) : 'Pago incompleto',
+    isTotal: change >= 0,
+  ),
+] else if (_paymentMethod == 'transfer') ...[
+  if (isFull) ...[
+    TextField(
+      controller: _transferReferenceController,
+      decoration: const InputDecoration(
+        labelText: 'Referencia (opcional)',
+        hintText: 'Ej. Folio o referencia',
+      ),
+    ),
+  ] else ...[
+    Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        _transferReferenceController.text.trim().isEmpty
+            ? 'Transferencia sin referencia'
+            : 'Referencia: ${_transferReferenceController.text.trim()}',
+        style: TextStyle(
+          fontSize: 12,
+          color: Colors.grey[700],
+        ),
+      ),
+    ),
+  ],
+] else ...[
+  Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: AppTheme.primaryColor.withValues(alpha: 0.06),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: const Text(
+      'Cobro con terminal Point. La integración automática se agregará después. Por ahora esta opción solo registra la venta como pago con tarjeta.',
+      style: TextStyle(
+        fontSize: 12,
+        height: 1.4,
+      ),
+    ),
+  ),
+],
+
+                            const SizedBox(height: 4),
+                            PrimaryButton(
+                              onPressed: _isSavingSale
+                                  ? null
+                                  : () => _confirmSale(
+                                        context.read<BillingBloc>().state,
+                                      ),
+                              icon: _isSavingSale
+                                  ? Icons.hourglass_top
+                                  : Icons.check_circle_outline,
+                              label: _isSavingSale
+                                  ? 'Guardando venta...'
+                                  : 'Confirmar venta',
+                              isLoading: _isSavingSale,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+
+                SliverToBoxAdapter(
+                  child: SizedBox(
+                    height: MediaQuery.of(context).padding.bottom + 8,
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }

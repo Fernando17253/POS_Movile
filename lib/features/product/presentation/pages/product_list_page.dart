@@ -128,7 +128,7 @@ class _ProductListPageState extends State<ProductListPage> {
                       ),
                       child: IconButton(
                         icon: const Icon(
-                          Icons.qr_code_scanner,
+                          Icons.barcode_reader,
                           color: AppTheme.primaryColor,
                         ),
                         onPressed: () => _scanQR(state.products),

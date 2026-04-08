@@ -124,7 +124,7 @@ void dispose() {
                 borderRadius: BorderRadius.circular(14),
                 onTap: _scanBarcode,
                 child: const Icon(
-                  Icons.qr_code_scanner,
+                  Icons.barcode_reader,
                   color: AppTheme.primaryColor,
                 ),
               ),
@@ -632,17 +632,46 @@ Widget _buildCartSheet() {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Punto de venta'),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            onPressed: () => context.push('/settings'),
-            icon: const Icon(Icons.settings),
-            tooltip: 'Configuración',
+appBar: AppBar(
+title: const Text(
+    'Abarrotes Primavera',
+    style: TextStyle(
+      fontWeight: FontWeight.bold,
+      fontSize: 22, // Un poco más grande se ve muy bien a la izquierda
+    ),
+  ),
+  centerTitle: false, // <--- Esto lo mueve a la izquierda
+  elevation: 0,
+  backgroundColor: Colors.white,
+  foregroundColor: Colors.black,
+  actions: [
+    Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: TextButton.icon(
+        onPressed: () => context.push('/sales'),
+        icon: const Icon(Icons.history, size: 20),
+        label: const Text(
+          '',
+          overflow: TextOverflow.ellipsis,
+        ),
+        style: TextButton.styleFrom(
+          foregroundColor: Theme.of(context).primaryColor,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          minimumSize: const Size(0, 36),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
           ),
-        ],
+        ),
       ),
+    ),
+    IconButton(
+      onPressed: () => context.push('/settings'),
+      icon: const Icon(Icons.settings),
+      tooltip: 'Configuración',
+    ),
+  ],
+),
       body: MultiBlocListener(
         listeners: [
           BlocListener<BillingBloc, BillingState>(

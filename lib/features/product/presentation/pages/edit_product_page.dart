@@ -217,7 +217,7 @@ class _EditProductPageState extends State<EditProductPage> {
                     child: Row(
                       children: [
                         const Icon(
-                          Icons.qr_code_scanner,
+                          Icons.barcode_reader,
                           color: AppTheme.primaryColor,
                           size: 28,
                         ),

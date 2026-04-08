@@ -102,7 +102,7 @@ class _SettingsPageState extends State<SettingsPage> {
             _buildListGroup(
               children: [
                 _buildListItem(
-                  icon: Icons.qr_code_scanner,
+                  icon: Icons.takeout_dining,
                   title: 'Products',
                   subtitle: 'Manage stock and barcodes',
                   onTap: () => context.push('/products'),
