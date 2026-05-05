@@ -1,3 +1,4 @@
+import 'package:billing_app/features/product/presentation/bloc/product_bloc.dart';
 import 'package:billing_app/features/sales/data/repositories/sales_repository_impl.dart';
 import 'package:billing_app/features/sales/domain/entities/sale.dart';
 import 'package:billing_app/features/sales/domain/entities/sale_item.dart';
@@ -6,6 +7,18 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:billing_app/core/theme/app_theme.dart';
 import 'package:billing_app/core/widgets/primary_button.dart';
+import '../../../customers/domain/entities/customer.dart';
+import 'dart:io';
+
+import '../../../../core/data/hive_database.dart';
+
+import '../../../customers/data/repositories/customer_repository_impl.dart';
+import '../../../customers/domain/entities/customer_ledger_entry.dart';
+import '../../../customers/domain/entities/customer_ledger_item.dart';
+import '../../../customers/presentation/bloc/customer_bloc.dart';
+
+import '../../../product/data/repositories/product_repository_impl.dart';
+import '../../../product/domain/entities/product.dart';
 
 import '../bloc/billing_bloc.dart';
 
@@ -22,11 +35,16 @@ class _CheckoutPageState extends State<CheckoutPage> {
   final TextEditingController _transferReferenceController =
       TextEditingController();
 
+  final _customerRepository = CustomerRepositoryImpl();
   final ValueNotifier<double> _sheetExtent = ValueNotifier(0.10);
   final _salesRepository = SalesRepositoryImpl();
+  final _productRepository = ProductRepositoryImpl();
 
-  String _paymentMethod = 'cash'; // cash | transfer
+  String _paymentMethod = 'cash'; // cash | transfer | point
   bool _isSavingSale = false;
+
+  Customer? _selectedCustomer;
+  bool _sendToCustomerLedger = false;
 
   String _formatCurrency(double value) {
     return '\$${value.toStringAsFixed(2)} MXN';
@@ -41,6 +59,244 @@ class _CheckoutPageState extends State<CheckoutPage> {
     final received = _parseDouble(_amountReceivedController.text);
     return received - total;
   }
+
+  String _formatStockValue(double value) {
+  if (value % 1 == 0) {
+    return value.toInt().toString();
+  }
+  return value.toStringAsFixed(2);
+}
+
+String? _validateStockBeforeSale(BillingState billingState) {
+  for (final item in billingState.cartItems) {
+    final currentStock = item.product.stock;
+    final requested = item.quantity.toDouble();
+
+    if (currentStock <= 0) {
+      return 'El producto "${item.product.name}" no tiene stock disponible.';
+    }
+
+    if (requested > currentStock) {
+      return 'Stock insuficiente para "${item.product.name}". '
+          'Disponible: ${_formatStockValue(currentStock)} | '
+          'Intentas vender: ${item.quantity}.';
+    }
+  }
+
+  return null;
+}
+
+Future<String?> _discountStock(BillingState billingState) async {
+  final updatedOriginalProducts = <Product>[];
+
+  for (final item in billingState.cartItems) {
+    final originalProduct = item.product;
+    final updatedProduct = originalProduct.copyWith(
+      stock: originalProduct.stock - item.quantity,
+    );
+
+    final result = await _productRepository.updateProduct(updatedProduct);
+
+    bool failed = false;
+    String failureMessage = '';
+
+    result.fold(
+      (failure) {
+        failed = true;
+        failureMessage = failure.message;
+      },
+      (_) {},
+    );
+
+    if (failed) {
+      for (final original in updatedOriginalProducts) {
+        await _productRepository.updateProduct(original);
+      }
+      return failureMessage;
+    }
+
+    updatedOriginalProducts.add(originalProduct);
+  }
+
+  return null;
+}
+
+Future<void> _restoreStock(List<Product> originalProducts) async {
+  for (final product in originalProducts) {
+    await _productRepository.updateProduct(product);
+  }
+}
+
+Future<void> _saveSaleToCustomerLedger(BillingState billingState) async {
+  if (_selectedCustomer == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Selecciona un cliente para mandar la venta a libreta.'),
+        backgroundColor: Colors.red,
+      ),
+    );
+    return;
+  }
+
+  final total = billingState.totalAmount;
+  final currentCustomer = _selectedCustomer!;
+  final saleId = DateTime.now().millisecondsSinceEpoch.toString();
+  final createdAt = DateTime.now();
+
+  final sale = Sale(
+    id: saleId,
+    createdAt: createdAt,
+    items: billingState.cartItems.map((item) {
+      return SaleItem(
+        productId: item.product.id,
+        productName: item.product.name,
+        internalCode: item.product.internalCode,
+        barcode: item.product.barcode,
+        imageUrl: item.product.imageUrl,
+        localImagePath: item.product.localImagePath,
+        unitType: item.product.unitType,
+        quantity: item.quantity,
+        unitPrice: item.product.price,
+        total: item.total,
+      );
+    }).toList(),
+    subtotal: total,
+    discount: 0,
+    total: total,
+    paymentMethod: 'customer_ledger',
+    amountReceived: null,
+    changeAmount: null,
+    transferReference: null,
+    customerId: currentCustomer.id,
+    customerName: currentCustomer.name,
+    isCustomerLedger: true,
+  );
+
+  final saleResult = await _salesRepository.saveSale(sale);
+
+  if (!mounted) return;
+
+  await saleResult.fold(
+    (failure) async {
+      final originalProducts =
+          billingState.cartItems.map((item) => item.product).toList();
+
+      await _restoreStock(originalProducts);
+
+      if (!mounted) return;
+
+      setState(() {
+        _isSavingSale = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'No se pudo guardar la venta en historial: ${failure.message}',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+    },
+    (_) async {
+      final balanceAfter = currentCustomer.currentBalance + total;
+
+      final entry = CustomerLedgerEntry(
+        id: '$saleId-ledger',
+        customerId: currentCustomer.id,
+        type: 'product_charge',
+        createdAt: createdAt,
+        description: 'Venta enviada a libreta',
+        amount: total,
+        balanceAfter: balanceAfter,
+        relatedSaleId: saleId,
+        items: billingState.cartItems.map((item) {
+          return CustomerLedgerItem(
+            productId: item.product.id,
+            productName: item.product.name,
+            internalCode: item.product.internalCode,
+            barcode: item.product.barcode,
+            imageUrl: item.product.imageUrl,
+            localImagePath: item.product.localImagePath,
+            quantity: item.quantity,
+            unitPrice: item.product.price,
+            total: item.total,
+          );
+        }).toList(),
+        paymentSplits: const [],
+      );
+
+      final ledgerResult = await _customerRepository.addCustomerLedgerEntry(
+        entry,
+      );
+
+      if (!mounted) return;
+
+      ledgerResult.fold(
+        (failure) async {
+          await HiveDatabase.saleBox.delete(saleId);
+
+          final originalProducts =
+              billingState.cartItems.map((item) => item.product).toList();
+          await _restoreStock(originalProducts);
+
+          if (!mounted) return;
+
+          setState(() {
+            _isSavingSale = false;
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'No se pudo guardar la venta en la libreta: ${failure.message}',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        },
+        (_) {
+          setState(() {
+            _isSavingSale = false;
+          });
+
+          context.read<ProductBloc>().add(LoadProducts());
+          context.read<CustomerBloc>().add(const LoadCustomers());
+          context.read<BillingBloc>().add(ClearCartEvent());
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Venta enviada a la libreta de ${currentCustomer.name} y guardada en historial.',
+              ),
+              backgroundColor: Colors.green,
+            ),
+          );
+
+          context.go('/');
+        },
+      );
+    },
+  );
+}
+
+Future<void> _selectCustomer() async {
+  final customer = await context.push<Customer>('/customers/select');
+
+  if (customer != null && mounted) {
+    setState(() {
+      _selectedCustomer = customer;
+      _sendToCustomerLedger = true;
+    });
+  }
+}
+
+void _clearSelectedCustomer() {
+  setState(() {
+    _selectedCustomer = null;
+    _sendToCustomerLedger = false;
+  });
+}
 
   Future<void> _confirmCancelSale() async {
     final shouldCancel = await showDialog<bool>(
@@ -74,105 +330,168 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
   }
 
-  Future<void> _confirmSale(BillingState billingState) async {
-    if (billingState.cartItems.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No hay productos en la venta.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
+Future<void> _confirmSale(BillingState billingState) async {
 
-    final total = billingState.totalAmount;
-    final amountReceived = _parseDouble(_amountReceivedController.text);
-    final change = _calculateChange(total);
-
-    if (_paymentMethod == 'cash') {
-      if (_amountReceivedController.text.trim().isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Ingresa el monto recibido.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
-
-      if (amountReceived < total) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('El monto recibido no cubre el total de la venta.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
-    }
-
-    setState(() {
-      _isSavingSale = true;
-    });
-
-    final sale = Sale(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      createdAt: DateTime.now(),
-      items: billingState.cartItems.map((item) {
-        return SaleItem(
-          productId: item.product.id,
-          productName: item.product.name,
-          internalCode: item.product.internalCode,
-          barcode: item.product.barcode,
-          imageUrl: item.product.imageUrl,
-          unitType: item.product.unitType,
-          quantity: item.quantity,
-          unitPrice: item.product.price,
-          total: item.total,
-        );
-      }).toList(),
-      subtotal: total,
-      discount: 0,
-      total: total,
-      paymentMethod: _paymentMethod,
-      amountReceived: _paymentMethod == 'cash' ? amountReceived : null,
-      changeAmount: _paymentMethod == 'cash' ? change : null,
-      transferReference: _paymentMethod == 'transfer'
-          ? (_transferReferenceController.text.trim().isEmpty
-              ? null
-              : _transferReferenceController.text.trim())
-          : null,
+  if (_sendToCustomerLedger && _selectedCustomer == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Selecciona un cliente para mandar la venta a libreta.'),
+        backgroundColor: Colors.red,
+      ),
     );
+    return;
+  }
 
-    final result = await _salesRepository.saveSale(sale);
+  if (billingState.cartItems.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('No hay productos en la venta.'),
+        backgroundColor: Colors.red,
+      ),
+    );
+    return;
+  }
 
-    if (!mounted) return;
+  final stockError = _validateStockBeforeSale(billingState);
+  if (stockError != null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(stockError),
+        backgroundColor: Colors.red,
+      ),
+    );
+    return;
+  }
 
+  final total = billingState.totalAmount;
+  final amountReceived = _parseDouble(_amountReceivedController.text);
+  final change = _calculateChange(total);
+
+if (!_sendToCustomerLedger && _paymentMethod == 'cash') {
+  if (_amountReceivedController.text.trim().isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Ingresa el monto recibido.'),
+        backgroundColor: Colors.red,
+      ),
+    );
+    return;
+  }
+
+  if (amountReceived < total) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('El monto recibido no cubre el total de la venta.'),
+        backgroundColor: Colors.red,
+      ),
+    );
+    return;
+  }
+}
+
+  setState(() {
+    _isSavingSale = true;
+  });
+
+  final originalProducts =
+      billingState.cartItems.map((item) => item.product).toList();
+
+  final stockUpdateError = await _discountStock(billingState);
+
+  if (!mounted) return;
+
+  if (stockUpdateError != null) {
     setState(() {
       _isSavingSale = false;
     });
 
-    result.fold(
-      (failure) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('No se pudo guardar la venta: ${failure.message}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      },
-      (_) {
-        context.read<BillingBloc>().add(ClearCartEvent());
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Venta guardada correctamente.'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        context.go('/');
-      },
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('No se pudo descontar el stock: $stockUpdateError'),
+        backgroundColor: Colors.red,
+      ),
     );
+    return;
   }
+
+if (_sendToCustomerLedger) {
+  await _saveSaleToCustomerLedger(billingState);
+  return;
+}
+
+  final sale = Sale(
+    id: DateTime.now().millisecondsSinceEpoch.toString(),
+    createdAt: DateTime.now(),
+    items: billingState.cartItems.map((item) {
+      return SaleItem(
+        productId: item.product.id,
+        productName: item.product.name,
+        internalCode: item.product.internalCode,
+        barcode: item.product.barcode,
+        imageUrl: item.product.imageUrl,
+        localImagePath: item.product.localImagePath,
+        unitType: item.product.unitType,
+        quantity: item.quantity,
+        unitPrice: item.product.price,
+        total: item.total,
+      );
+    }).toList(),
+    subtotal: total,
+    discount: 0,
+    total: total,
+    paymentMethod: _paymentMethod,
+    amountReceived: _paymentMethod == 'cash' ? amountReceived : null,
+    changeAmount: _paymentMethod == 'cash' ? change : null,
+    transferReference: _paymentMethod == 'transfer'
+        ? (_transferReferenceController.text.trim().isEmpty
+            ? null
+            : _transferReferenceController.text.trim())
+        : null,
+    customerId: null,
+    customerName: null,
+    isCustomerLedger: false,
+  );
+
+  final result = await _salesRepository.saveSale(sale);
+
+  if (!mounted) return;
+
+  result.fold(
+    (failure) async {
+      await _restoreStock(originalProducts);
+
+      if (!mounted) return;
+
+      setState(() {
+        _isSavingSale = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo guardar la venta: ${failure.message}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    },
+(_) {
+  setState(() {
+    _isSavingSale = false;
+  });
+
+  context.read<ProductBloc>().add(LoadProducts());
+  context.read<BillingBloc>().add(ClearCartEvent());
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text('Venta guardada y stock actualizado correctamente.'),
+      backgroundColor: Colors.green,
+    ),
+  );
+
+  context.go('/');
+},
+  );
+}
 
   @override
   void dispose() {
@@ -295,7 +614,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _CheckoutThumbnail(imageUrl: item.product.imageUrl),
+                      _CheckoutThumbnail(
+                        imageUrl: item.product.imageUrl,
+                        localImagePath: item.product.localImagePath,
+                      ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(
@@ -475,6 +797,114 @@ const SizedBox(height: 14),
                               isTotal: true,
                             ),
 
+                            const SizedBox(height: 14),
+
+Container(
+  width: double.infinity,
+  padding: const EdgeInsets.all(14),
+  decoration: BoxDecoration(
+    color: Colors.grey.shade50,
+    borderRadius: BorderRadius.circular(14),
+    border: Border.all(color: const Color(0xFFE5E5EA)),
+  ),
+  child: Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        'Destino de la venta',
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      const SizedBox(height: 10),
+      Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        children: [
+          ChoiceChip(
+            label: const Text('Venta normal'),
+            selected: !_sendToCustomerLedger,
+            onSelected: (_) {
+              setState(() {
+                _sendToCustomerLedger = false;
+                _selectedCustomer = null;
+              });
+            },
+          ),
+          ChoiceChip(
+            label: const Text('Mandar a libreta'),
+            selected: _sendToCustomerLedger,
+            onSelected: (_) async {
+              await _selectCustomer();
+            },
+          ),
+        ],
+      ),
+      if (_sendToCustomerLedger) ...[
+        const SizedBox(height: 12),
+        if (_selectedCustomer != null)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppTheme.primaryColor.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Cliente seleccionado',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _selectedCustomer!.name,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      if (_selectedCustomer!.phone != null &&
+                          _selectedCustomer!.phone!.trim().isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          _selectedCustomer!.phone!,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: _clearSelectedCustomer,
+                  icon: const Icon(Icons.close),
+                  tooltip: 'Quitar cliente',
+                ),
+              ],
+            ),
+          )
+        else
+          OutlinedButton.icon(
+            onPressed: _selectCustomer,
+            icon: const Icon(Icons.person_search_outlined),
+            label: const Text('Seleccionar cliente'),
+          ),
+      ],
+    ],
+  ),
+),
+
                             const SizedBox(height: 16),
 
                             if (isFull) ...[
@@ -553,7 +983,23 @@ _paymentMethod == 'cash'
   const SizedBox(height: 12),
 ],
 
-if (_paymentMethod == 'cash') ...[
+if (_sendToCustomerLedger) ...[
+  Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: Colors.orange.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: const Text(
+      'Esta venta se registrará como adeudo en la libreta del cliente. En este paso no se cobrará monto recibido.',
+      style: TextStyle(
+        fontSize: 12,
+        height: 1.4,
+      ),
+    ),
+  ),
+] else if (_paymentMethod == 'cash') ...[
   TextField(
     controller: _amountReceivedController,
     keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -775,51 +1221,69 @@ class _MiniInfoChip extends StatelessWidget {
 
 class _CheckoutThumbnail extends StatelessWidget {
   final String? imageUrl;
+  final String? localImagePath;
 
   const _CheckoutThumbnail({
     required this.imageUrl,
+    required this.localImagePath,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (imageUrl == null || imageUrl!.trim().isEmpty) {
-      return Container(
-        width: 58,
-        height: 58,
-        decoration: BoxDecoration(
-          color: Colors.grey.shade100,
+    if (localImagePath != null && localImagePath!.trim().isNotEmpty) {
+      final file = File(localImagePath!);
+
+      if (file.existsSync()) {
+        return ClipRRect(
           borderRadius: BorderRadius.circular(12),
-        ),
-        alignment: Alignment.center,
-        child: Icon(
-          Icons.inventory_2_outlined,
-          color: Colors.grey.shade400,
+          child: Image.file(
+            file,
+            width: 58,
+            height: 58,
+            fit: BoxFit.cover,
+          ),
+        );
+      }
+    }
+
+    if (imageUrl != null && imageUrl!.trim().isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.network(
+          imageUrl!,
+          width: 58,
+          height: 58,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) {
+            return Container(
+              width: 58,
+              height: 58,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              alignment: Alignment.center,
+              child: Icon(
+                Icons.broken_image_outlined,
+                color: Colors.grey.shade400,
+              ),
+            );
+          },
         ),
       );
     }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Image.network(
-        imageUrl!,
-        width: 58,
-        height: 58,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) {
-          return Container(
-            width: 58,
-            height: 58,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            alignment: Alignment.center,
-            child: Icon(
-              Icons.broken_image_outlined,
-              color: Colors.grey.shade400,
-            ),
-          );
-        },
+    return Container(
+      width: 58,
+      height: 58,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      alignment: Alignment.center,
+      child: Icon(
+        Icons.inventory_2_outlined,
+        color: Colors.grey.shade400,
       ),
     );
   }

@@ -1,14 +1,18 @@
+import 'dart:io';
+
+import 'package:billing_app/core/services/product_image_service.dart';
 import 'package:billing_app/core/widgets/input_label.dart';
 import 'package:billing_app/core/widgets/primary_button.dart';
+import 'package:billing_app/core/theme/app_theme.dart';
+import 'package:billing_app/core/utils/app_validators.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
 import '../bloc/product_bloc.dart';
 import '../../domain/entities/product.dart';
-import '../../../../core/theme/app_theme.dart';
-import '../../../../core/utils/app_validators.dart';
 
 class AddProductPage extends StatefulWidget {
   final String? initialBarcode;
@@ -36,6 +40,7 @@ class AddProductPage extends StatefulWidget {
 
 class _AddProductPageState extends State<AddProductPage> {
   final _formKey = GlobalKey<FormState>();
+  final ImagePicker _imagePicker = ImagePicker();
 
   late final TextEditingController _barcodeController;
   late final TextEditingController _internalCodeController;
@@ -49,6 +54,10 @@ class _AddProductPageState extends State<AddProductPage> {
   late bool _withoutBarcode;
   String _selectedUnitType = 'piece';
   bool _isWeighable = false;
+
+  File? _selectedImageFile;
+  bool _removeDetectedImage = false;
+  bool _isSavingImage = false;
 
   static const List<Map<String, String>> _unitOptions = [
     {'value': 'piece', 'label': 'Pieza'},
@@ -175,7 +184,79 @@ class _AddProductPageState extends State<AddProductPage> {
     );
   }
 
-  void _submit() {
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final pickedFile = await _imagePicker.pickImage(
+        source: source,
+        imageQuality: 90,
+      );
+
+      if (pickedFile == null) return;
+
+      setState(() {
+        _selectedImageFile = File(pickedFile.path);
+        _removeDetectedImage = false;
+      });
+    } catch (_) {
+      _showError('No se pudo seleccionar la imagen.');
+    }
+  }
+
+  Future<void> _showImageSourceSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        final hasAnyImage = _selectedImageFile != null ||
+            (!_removeDetectedImage &&
+                widget.initialImageUrl != null &&
+                widget.initialImageUrl!.isNotEmpty);
+
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: const Text('Tomar foto'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickImage(ImageSource.camera);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Elegir de galería'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickImage(ImageSource.gallery);
+                },
+              ),
+              if (hasAnyImage)
+                ListTile(
+                  leading: const Icon(
+                    Icons.delete_outline,
+                    color: Colors.red,
+                  ),
+                  title: const Text(
+                    'Quitar imagen',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    setState(() {
+                      _selectedImageFile = null;
+                      _removeDetectedImage = true;
+                    });
+                  },
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
     final rawBarcode = _barcodeController.text.trim();
@@ -215,13 +296,44 @@ class _AddProductPageState extends State<AddProductPage> {
       return;
     }
 
+    setState(() {
+      _isSavingImage = true;
+    });
+
+    final productId = const Uuid().v4();
+
+    String? localImagePath;
+    String? finalImageUrl;
+
+    if (_selectedImageFile != null) {
+      localImagePath = await ProductImageService().saveFileImageLocally(
+        sourceFile: _selectedImageFile!,
+        productId: productId,
+      );
+      finalImageUrl = null;
+    } else if (!_removeDetectedImage &&
+        widget.initialImageUrl != null &&
+        widget.initialImageUrl!.isNotEmpty) {
+      localImagePath = await ProductImageService().saveNetworkImageLocally(
+        imageUrl: widget.initialImageUrl!,
+        productId: productId,
+      );
+      finalImageUrl = widget.initialImageUrl;
+    } else {
+      localImagePath = null;
+      finalImageUrl = null;
+    }
+
+    if (!mounted) return;
+
     final product = Product(
-      id: const Uuid().v4(),
+      id: productId,
       internalCode: internalCode,
       name: name,
       barcode: barcode,
       brand: brand.isEmpty ? null : brand,
-      imageUrl: widget.initialImageUrl,
+      imageUrl: finalImageUrl,
+      localImagePath: localImagePath,
       categoryId: null,
       price: price,
       cost: cost,
@@ -233,6 +345,11 @@ class _AddProductPageState extends State<AddProductPage> {
     );
 
     context.read<ProductBloc>().add(AddProduct(product));
+
+    setState(() {
+      _isSavingImage = false;
+    });
+
     context.pop();
   }
 
@@ -287,7 +404,6 @@ class _AddProductPageState extends State<AddProductPage> {
                   ),
                   const SizedBox(height: 20),
                 ],
-
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Producto sin código de barras'),
@@ -305,7 +421,6 @@ class _AddProductPageState extends State<AddProductPage> {
                   },
                 ),
                 const SizedBox(height: 16),
-
                 if (!_withoutBarcode) ...[
                   const InputLabel(text: 'Código de barras'),
                   Row(
@@ -350,7 +465,6 @@ class _AddProductPageState extends State<AddProductPage> {
                   ),
                   const SizedBox(height: 24),
                 ],
-
                 const InputLabel(text: 'Identificador interno'),
                 TextFormField(
                   controller: _internalCodeController,
@@ -367,7 +481,6 @@ class _AddProductPageState extends State<AddProductPage> {
                   ),
                 ),
                 const SizedBox(height: 24),
-
                 const InputLabel(text: 'Nombre del producto'),
                 TextFormField(
                   controller: _nameController,
@@ -380,7 +493,6 @@ class _AddProductPageState extends State<AddProductPage> {
                   ),
                 ),
                 const SizedBox(height: 24),
-
                 const InputLabel(text: 'Marca (opcional)'),
                 TextFormField(
                   controller: _brandController,
@@ -390,7 +502,6 @@ class _AddProductPageState extends State<AddProductPage> {
                   ),
                 ),
                 const SizedBox(height: 24),
-
                 const InputLabel(text: 'Precio de venta'),
                 TextFormField(
                   controller: _priceController,
@@ -400,11 +511,12 @@ class _AddProductPageState extends State<AddProductPage> {
                     prefixText: '\$ ',
                     hintText: '0.00',
                   ),
-                  validator: (value) =>
-                      _requiredNumberValidator(value, 'Ingresa el precio de venta'),
+                  validator: (value) => _requiredNumberValidator(
+                    value,
+                    'Ingresa el precio de venta',
+                  ),
                 ),
                 const SizedBox(height: 24),
-
                 const InputLabel(text: 'Costo de compra'),
                 TextFormField(
                   controller: _costController,
@@ -414,11 +526,12 @@ class _AddProductPageState extends State<AddProductPage> {
                     prefixText: '\$ ',
                     hintText: '0.00',
                   ),
-                  validator: (value) =>
-                      _requiredNumberValidator(value, 'Ingresa el costo de compra'),
+                  validator: (value) => _requiredNumberValidator(
+                    value,
+                    'Ingresa el costo de compra',
+                  ),
                 ),
                 const SizedBox(height: 24),
-
                 const InputLabel(text: 'Stock inicial'),
                 TextFormField(
                   controller: _stockController,
@@ -427,11 +540,12 @@ class _AddProductPageState extends State<AddProductPage> {
                   decoration: const InputDecoration(
                     hintText: '0',
                   ),
-                  validator: (value) =>
-                      _requiredNumberValidator(value, 'Ingresa el stock inicial'),
+                  validator: (value) => _requiredNumberValidator(
+                    value,
+                    'Ingresa el stock inicial',
+                  ),
                 ),
                 const SizedBox(height: 24),
-
                 const InputLabel(text: 'Stock mínimo'),
                 TextFormField(
                   controller: _minStockController,
@@ -440,11 +554,12 @@ class _AddProductPageState extends State<AddProductPage> {
                   decoration: const InputDecoration(
                     hintText: '0',
                   ),
-                  validator: (value) =>
-                      _requiredNumberValidator(value, 'Ingresa el stock mínimo'),
+                  validator: (value) => _requiredNumberValidator(
+                    value,
+                    'Ingresa el stock mínimo',
+                  ),
                 ),
                 const SizedBox(height: 24),
-
                 const InputLabel(text: 'Unidad de venta'),
                 DropdownButtonFormField<String>(
                   value: _selectedUnitType,
@@ -467,7 +582,6 @@ class _AddProductPageState extends State<AddProductPage> {
                   ),
                 ),
                 const SizedBox(height: 16),
-
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Producto pesable'),
@@ -481,42 +595,115 @@ class _AddProductPageState extends State<AddProductPage> {
                     });
                   },
                 ),
-
-                if (widget.initialImageUrl != null &&
-                    widget.initialImageUrl!.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  const InputLabel(text: 'Imagen detectada'),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: Image.network(
-                      widget.initialImageUrl!,
-                      height: 180,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) {
-                        return Container(
-                          height: 180,
-                          width: double.infinity,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          child: const Text('No se pudo cargar la imagen'),
-                        );
-                      },
+                const SizedBox(height: 16),
+                const InputLabel(text: 'Imagen del producto'),
+                const SizedBox(height: 8),
+                InkWell(
+                  onTap: _showImageSourceSheet,
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    width: double.infinity,
+                    height: 190,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: Colors.grey.shade300),
                     ),
+                    child: _selectedImageFile != null
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(14),
+                            child: Image.file(
+                              _selectedImageFile!,
+                              fit: BoxFit.cover,
+                            ),
+                          )
+                        : (!_removeDetectedImage &&
+                                widget.initialImageUrl != null &&
+                                widget.initialImageUrl!.isNotEmpty)
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(14),
+                                child: Image.network(
+                                  widget.initialImageUrl!,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) {
+                                    return const _ImagePlaceholder();
+                                  },
+                                ),
+                              )
+                            : const _ImagePlaceholder(),
                   ),
-                ],
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _showImageSourceSheet,
+                      icon: const Icon(Icons.add_a_photo_outlined),
+                      label: const Text('Agregar o cambiar imagen'),
+                    ),
+                    if (_selectedImageFile != null ||
+                        (!_removeDetectedImage &&
+                            widget.initialImageUrl != null &&
+                            widget.initialImageUrl!.isNotEmpty))
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            _selectedImageFile = null;
+                            _removeDetectedImage = true;
+                          });
+                        },
+                        icon: const Icon(Icons.delete_outline),
+                        label: const Text('Quitar imagen'),
+                      ),
+                  ],
+                ),
               ],
             ),
           ),
         ),
       ),
       bottomNavigationBar: PrimaryButton(
-        onPressed: _submit,
-        icon: Icons.add_circle,
-        label: 'Guardar producto',
+        onPressed: _isSavingImage ? null : _submit,
+        icon: _isSavingImage ? Icons.hourglass_top : Icons.add_circle,
+        label: _isSavingImage ? 'Guardando imagen...' : 'Guardar producto',
+      ),
+    );
+  }
+}
+
+class _ImagePlaceholder extends StatelessWidget {
+  const _ImagePlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.image_outlined,
+            size: 42,
+            color: Colors.grey.shade400,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Sin imagen',
+            style: TextStyle(
+              color: Colors.grey.shade600,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Toca para agregar una foto',
+            style: TextStyle(
+              color: Colors.grey.shade500,
+              fontSize: 12,
+            ),
+          ),
+        ],
       ),
     );
   }

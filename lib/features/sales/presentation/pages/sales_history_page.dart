@@ -1,6 +1,135 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+
+import '../../../shop/presentation/bloc/shop_bloc.dart';
 import '../../data/repositories/sales_repository_impl.dart';
 import '../../domain/entities/sale.dart';
+
+String _two(int n) => n.toString().padLeft(2, '0');
+
+String _formatCurrency(double value) {
+  return '\$${value.toStringAsFixed(2)} MXN';
+}
+
+String _formatDate(DateTime date) {
+  return '${_two(date.day)}/${_two(date.month)}/${date.year} ${_two(date.hour)}:${_two(date.minute)}';
+}
+
+String _monthName(int month) {
+  const months = [
+    '',
+    'enero',
+    'febrero',
+    'marzo',
+    'abril',
+    'mayo',
+    'junio',
+    'julio',
+    'agosto',
+    'septiembre',
+    'octubre',
+    'noviembre',
+    'diciembre',
+  ];
+  return months[month];
+}
+
+String _paymentMethodLabel(String method) {
+  switch (method) {
+    case 'cash':
+      return 'Efectivo';
+    case 'transfer':
+      return 'Transferencia';
+    case 'point':
+      return 'Tarjeta / Point';
+    case 'customer_ledger':
+      return 'Libreta';
+    default:
+      return method;
+  }
+}
+
+Color _paymentMethodColor(String method) {
+  switch (method) {
+    case 'cash':
+      return Colors.green;
+    case 'transfer':
+      return Colors.blue;
+    case 'point':
+      return Colors.deepPurple;
+    case 'customer_ledger':
+      return Colors.orange;
+    default:
+      return Colors.grey;
+  }
+}
+
+String _buildSaleFolio(Sale sale) {
+  final date = sale.createdAt;
+  final datePart = '${date.year}${_two(date.month)}${_two(date.day)}';
+  final rawId = sale.id;
+  final suffix = rawId.length > 6 ? rawId.substring(rawId.length - 6) : rawId;
+  return 'VTA-$datePart-$suffix';
+}
+
+String _buildDayTitle(DateTime date, DateTime now) {
+  final today = DateTime(now.year, now.month, now.day);
+  final target = DateTime(date.year, date.month, date.day);
+  final diff = today.difference(target).inDays;
+
+  if (diff == 0) return 'Hoy';
+  if (diff == 1) return 'Ayer';
+  return '${date.day} de ${_monthName(date.month)} de ${date.year}';
+}
+
+String _buildSaleSearchIndex(Sale sale) {
+  final date = sale.createdAt;
+  final day = _two(date.day);
+  final month = _two(date.month);
+  final year = date.year.toString();
+  final monthName = _monthName(date.month);
+  final dayTitle = _buildDayTitle(date, DateTime.now()).toLowerCase();
+
+  final productTerms = sale.items.expand((item) {
+    return [
+      item.productName,
+      item.internalCode,
+      item.barcode ?? '',
+    ];
+  }).join(' ');
+
+  final payment = _paymentMethodLabel(sale.paymentMethod);
+  final reference = sale.transferReference ?? '';
+  final folio = _buildSaleFolio(sale);
+  final customerName = sale.customerName ?? '';
+  final ledgerTerms = sale.isCustomerLedger ? 'libreta adeudo cliente' : '';
+
+  final dateTerms = [
+    '$day/$month/$year',
+    '${date.day}/${date.month}/$year',
+    '$day-$month-$year',
+    '${date.day}-${date.month}-$year',
+    '$day de $monthName de $year',
+    '${date.day} de $monthName de $year',
+    '$monthName $year',
+    monthName,
+    year,
+    dayTitle,
+  ].join(' ');
+
+  return [
+    sale.id,
+    folio,
+    payment,
+    reference,
+    customerName,
+    ledgerTerms,
+    productTerms,
+    dateTerms,
+  ].join(' ').toLowerCase();
+}
 
 class SalesHistoryPage extends StatefulWidget {
   const SalesHistoryPage({super.key});
@@ -16,8 +145,9 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
   late Future<List<Sale>> _salesFuture;
   String _searchQuery = '';
 
-  /// true = colapsada
-  final Map<String, bool> _collapsedSections = {};
+  String? _expandedSectionKey;
+  bool _didInteractWithSections = false;
+
 
   @override
   void initState() {
@@ -52,120 +182,16 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
     await _salesFuture;
   }
 
+void _toggleSection(String key, String? effectiveExpandedKey) {
+  setState(() {
+    _didInteractWithSections = true;
+    final current = _expandedSectionKey ?? effectiveExpandedKey;
+    _expandedSectionKey = current == key ? null : key;
+  });
+}
+
   void _clearSearch() {
     _searchController.clear();
-  }
-
-  void _toggleSection(String key) {
-    setState(() {
-      _collapsedSections[key] = !(_collapsedSections[key] ?? false);
-    });
-  }
-
-  String _formatCurrency(double value) {
-    return '\$${value.toStringAsFixed(2)} MXN';
-  }
-
-  String _two(int n) => n.toString().padLeft(2, '0');
-
-  String _formatDate(DateTime date) {
-    return '${_two(date.day)}/${_two(date.month)}/${date.year} ${_two(date.hour)}:${_two(date.minute)}';
-  }
-
-  String _paymentMethodLabel(String method) {
-    switch (method) {
-      case 'cash':
-        return 'Efectivo';
-      case 'transfer':
-        return 'Transferencia';
-      case 'point':
-        return 'Tarjeta / Point';
-      default:
-        return method;
-    }
-  }
-
-  Color _paymentMethodColor(String method) {
-    switch (method) {
-      case 'cash':
-        return Colors.green;
-      case 'transfer':
-        return Colors.blue;
-      case 'point':
-        return Colors.deepPurple;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  String _monthName(int month) {
-    const months = [
-      '',
-      'enero',
-      'febrero',
-      'marzo',
-      'abril',
-      'mayo',
-      'junio',
-      'julio',
-      'agosto',
-      'septiembre',
-      'octubre',
-      'noviembre',
-      'diciembre',
-    ];
-    return months[month];
-  }
-
-  String _buildDayTitle(DateTime date, DateTime now) {
-    final today = DateTime(now.year, now.month, now.day);
-    final target = DateTime(date.year, date.month, date.day);
-    final diff = today.difference(target).inDays;
-
-    if (diff == 0) return 'Hoy';
-    if (diff == 1) return 'Ayer';
-    return '${date.day} de ${_monthName(date.month)} de ${date.year}';
-  }
-
-  String _buildSaleSearchIndex(Sale sale) {
-    final date = sale.createdAt;
-    final day = _two(date.day);
-    final month = _two(date.month);
-    final year = date.year.toString();
-    final monthName = _monthName(date.month);
-    final dayTitle = _buildDayTitle(date, DateTime.now()).toLowerCase();
-
-    final productTerms = sale.items.expand((item) {
-      return [
-        item.productName,
-        item.internalCode,
-        item.barcode ?? '',
-      ];
-    }).join(' ');
-
-    final payment = _paymentMethodLabel(sale.paymentMethod);
-    final reference = sale.transferReference ?? '';
-
-    final dateTerms = [
-      '$day/$month/$year',
-      '${date.day}/${date.month}/$year',
-      '$day-$month-$year',
-      '${date.day}-${date.month}-$year',
-      '$day de $monthName de $year',
-      '${date.day} de $monthName de $year',
-      '$monthName $year',
-      monthName,
-      year,
-      dayTitle,
-    ].join(' ');
-
-    return [
-      sale.id,
-      payment,
-      reference,
-      productTerms,
-      dateTerms,
-    ].join(' ').toLowerCase();
   }
 
   bool _saleMatchesSearch(Sale sale, String query) {
@@ -177,7 +203,10 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
     final now = DateTime.now();
     final Map<String, _SalesSection> sections = {};
 
-    for (final sale in sales) {
+    final sortedSales = [...sales]
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    for (final sale in sortedSales) {
       final saleDate = sale.createdAt;
       final saleDay = DateTime(saleDate.year, saleDate.month, saleDate.day);
       final nowDay = DateTime(now.year, now.month, now.day);
@@ -185,16 +214,24 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
 
       late final String key;
       late final String title;
+      late final DateTime sortDate;
+      late final bool isToday;
 
       if (diffDays < 31) {
         key = 'day-${saleDate.year}-${_two(saleDate.month)}-${_two(saleDate.day)}';
         title = _buildDayTitle(saleDate, now);
+        sortDate = DateTime(saleDate.year, saleDate.month, saleDate.day);
+        isToday = diffDays == 0;
       } else if (diffDays < 366) {
         key = 'month-${saleDate.year}-${_two(saleDate.month)}';
         title = '${_monthName(saleDate.month)} ${saleDate.year}';
+        sortDate = DateTime(saleDate.year, saleDate.month, 1);
+        isToday = false;
       } else {
         key = 'year-${saleDate.year}';
         title = '${saleDate.year}';
+        sortDate = DateTime(saleDate.year, 1, 1);
+        isToday = false;
       }
 
       sections.putIfAbsent(
@@ -203,13 +240,39 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
           key: key,
           title: title,
           sales: [],
+          sortDate: sortDate,
+          isToday: isToday,
         ),
       );
 
       sections[key]!.sales.add(sale);
     }
 
-    return sections.values.toList();
+    final result = sections.values.toList()
+      ..sort((a, b) => b.sortDate.compareTo(a.sortDate));
+
+    for (final section in result) {
+      section.sales.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    }
+
+    return result;
+  }
+
+  String? _effectiveExpandedKey(List<_SalesSection> sections) {
+    if (sections.isEmpty) return null;
+
+    if (_didInteractWithSections) {
+      if (_expandedSectionKey == null) return null;
+
+      final exists = sections.any((section) => section.key == _expandedSectionKey);
+      return exists ? _expandedSectionKey : sections.first.key;
+    }
+
+    for (final section in sections) {
+      if (section.isToday) return section.key;
+    }
+
+    return sections.first.key;
   }
 
   void _openSaleDetail(Sale sale) {
@@ -235,6 +298,7 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
                 children: const [
                   SizedBox(height: 180),
                   Center(child: CircularProgressIndicator()),
@@ -244,6 +308,7 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
 
             if (snapshot.hasError) {
               return ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(24),
                 children: [
                   const SizedBox(height: 100),
@@ -276,87 +341,184 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
             final sales = snapshot.data ?? [];
             final filteredSales = sales
                 .where((sale) => _saleMatchesSearch(sale, _searchQuery))
-                .toList();
+                .toList()
+              ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
             final sections = _buildSections(filteredSales);
+            final expandedKey = _effectiveExpandedKey(sections);
 
             final totalFilteredAmount = filteredSales.fold<double>(
               0,
               (sum, sale) => sum + sale.total,
             );
 
-            return ListView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              children: [
-                _buildSearchCard(),
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    _HistorySummaryCard(
-                      label: 'Ventas visibles',
-                      value: '${filteredSales.length}',
+            if (sales.isEmpty) {
+              return CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  SliverToBoxAdapter(child: _buildTopArea(filteredSales, totalFilteredAmount)),
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: _buildEmptyState(
+                      icon: Icons.receipt_long_outlined,
+                      title: 'Aún no hay ventas guardadas.',
+                      subtitle: 'Cuando confirmes ventas, aparecerán aquí.',
                     ),
-                    _HistorySummaryCard(
-                      label: 'Monto visible',
-                      value: _formatCurrency(totalFilteredAmount),
-                      highlight: true,
+                  ),
+                ],
+              );
+            }
+
+            if (filteredSales.isEmpty) {
+              return CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  SliverToBoxAdapter(child: _buildTopArea(filteredSales, totalFilteredAmount)),
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: _buildEmptyState(
+                      icon: Icons.search_off_outlined,
+                      title: 'No se encontraron resultados.',
+                      subtitle:
+                          'Puedes buscar por fecha, folio, método de pago, referencia, nombre, clave o código.',
                     ),
-                  ],
+                  ),
+                ],
+              );
+            }
+
+            return CustomScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                SliverToBoxAdapter(
+                  child: _buildTopArea(filteredSales, totalFilteredAmount),
                 ),
-                const SizedBox(height: 16),
-                if (sales.isEmpty)
-                  _buildEmptyState(
-                    icon: Icons.receipt_long_outlined,
-                    title: 'Aún no hay ventas guardadas.',
-                    subtitle: 'Cuando confirmes ventas, aparecerán aquí.',
-                  )
-                else if (filteredSales.isEmpty)
-                  _buildEmptyState(
-                    icon: Icons.search_off_outlined,
-                    title: 'No se encontraron resultados.',
-                    subtitle:
-                        'Puedes buscar por fecha, folio, método de pago, referencia, nombre, clave o código.',
-                  )
-                else
-                  ...sections.map((section) {
-                    final sectionTotal = section.sales.fold<double>(
-                      0,
-                      (sum, sale) => sum + sale.total,
-                    );
+...sections.expand((section) {
+  final sectionTotal = section.sales.fold<double>(
+    0,
+    (sum, sale) => sum + sale.total,
+  );
 
-                    final isCollapsed = _searchQuery.isEmpty
-                        ? (_collapsedSections[section.key] ?? false)
-                        : false;
+  final isExpanded = expandedKey == section.key;
 
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 18),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildSectionGroupHeader(
-                            section: section,
-                            total: sectionTotal,
-                            isCollapsed: isCollapsed,
-                          ),
-                          if (!isCollapsed) ...[
-                            const SizedBox(height: 12),
-                            ...section.sales.map(
-                              (sale) => Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: _buildSaleCard(sale),
-                              ),
-                            ),
-                          ],
-                        ],
+  return <Widget>[
+    if (isExpanded)
+      SliverPersistentHeader(
+        pinned: true,
+        delegate: _SectionHeaderDelegate(
+          height: 92,
+          child: Container(
+            color: const Color(0xFFF7F7F8),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: _buildSectionGroupHeader(
+              section: section,
+              total: sectionTotal,
+              isExpanded: true,
+              onTap: () => _toggleSection(section.key, expandedKey),
+            ),
+          ),
+        ),
+      )
+    else
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: _buildSectionGroupHeader(
+            section: section,
+            total: sectionTotal,
+            isExpanded: false,
+            onTap: () => _toggleSection(section.key, expandedKey),
+          ),
+        ),
+      ),
+    SliverToBoxAdapter(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          16,
+          isExpanded ? 4 : 0,
+          16,
+          isExpanded ? 20 : 0,
+        ),
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 600),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: (child, animation) {
+            final curved = CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeInOutCubic,
+            );
+
+            return ClipRect(
+              child: FadeTransition(
+                opacity: curved,
+                child: SizeTransition(
+                  sizeFactor: curved,
+                  axisAlignment: -1.0,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, -0.15),
+                      end: Offset.zero,
+                    ).animate(curved),
+                    child: child,
+                  ),
+                ),
+              ),
+            );
+          },
+          child: isExpanded
+              ? Column(
+                  key: ValueKey('section-open-${section.key}'),
+                  children: [
+                    for (final sale in section.sales)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _buildSaleCard(sale),
                       ),
-                    );
-                  }),
+                  ],
+                )
+              : const SizedBox(
+                  key: ValueKey('section-closed'),
+                ),
+        ),
+      ),
+    ),
+  ];
+}),
+                const SliverToBoxAdapter(
+                  child: SizedBox(height: 24),
+                ),
               ],
             );
           },
         ),
+      ),
+    );
+  }
+
+  Widget _buildTopArea(List<Sale> filteredSales, double totalFilteredAmount) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      child: Column(
+        children: [
+          _buildSearchCard(),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              _HistorySummaryCard(
+                label: 'Ventas visibles',
+                value: '${filteredSales.length}',
+              ),
+              _HistorySummaryCard(
+                label: 'Monto visible',
+                value: _formatCurrency(totalFilteredAmount),
+                highlight: true,
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -379,7 +541,7 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
       child: TextField(
         controller: _searchController,
         decoration: InputDecoration(
-          hintText: 'Buscar por fecha, folio, producto, clave o método',
+          hintText: 'Buscar por fecha, folio, cliente, producto, clave o método',
           prefixIcon: const Icon(Icons.search),
           suffixIcon: _searchController.text.isEmpty
               ? null
@@ -393,66 +555,82 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
     );
   }
 
-  Widget _buildSectionGroupHeader({
-    required _SalesSection section,
-    required double total,
-    required bool isCollapsed,
-  }) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(14),
-      onTap: () => _toggleSection(section.key),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFE5E5EA)),
+Widget _buildSectionGroupHeader({
+  required _SalesSection section,
+  required double total,
+  required bool isExpanded,
+  required VoidCallback onTap,
+}) {
+  return InkWell(
+    borderRadius: BorderRadius.circular(16),
+    onTap: onTap,
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeInOut,
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isExpanded
+              ? const Color(0xFFD7E3FF)
+              : const Color(0xFFE5E5EA),
         ),
-        child: Row(
-          children: [
-            Icon(
-              isCollapsed
-                  ? Icons.keyboard_arrow_right
-                  : Icons.keyboard_arrow_down,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                section.title,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isExpanded ? 0.05 : 0.03),
+            blurRadius: isExpanded ? 12 : 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          AnimatedRotation(
+            turns: isExpanded ? 0.0 : -0.25,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeInOut,
+            child: const Icon(Icons.keyboard_arrow_down),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              section.title,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
               ),
             ),
-            const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '${section.sales.length} venta${section.sales.length == 1 ? '' : 's'}',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${section.sales.length} venta${section.sales.length == 1 ? '' : 's'}',
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  _formatCurrency(total),
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[700],
-                    fontWeight: FontWeight.w700,
-                  ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                _formatCurrency(total),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[700],
+                  fontWeight: FontWeight.w700,
                 ),
-              ],
-            ),
-          ],
-        ),
+              ),
+            ],
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildSaleCard(Sale sale) {
     final itemsCount = sale.items.fold<int>(
@@ -495,7 +673,7 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
-                    'Venta #${sale.id}',
+                    _buildSaleFolio(sale),
                     style: const TextStyle(
                       fontWeight: FontWeight.w700,
                       fontSize: 12,
@@ -524,13 +702,35 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
               ],
             ),
             const SizedBox(height: 12),
-            Text(
-              _formatDate(sale.createdAt),
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 13,
-              ),
-            ),
+Text(
+  _formatDate(sale.createdAt),
+  style: TextStyle(
+    color: Colors.grey[600],
+    fontSize: 13,
+  ),
+),
+if (sale.customerName != null && sale.customerName!.trim().isNotEmpty) ...[
+  const SizedBox(height: 8),
+  Text(
+    'Cliente: ${sale.customerName!}',
+    style: TextStyle(
+      fontSize: 13,
+      fontWeight: FontWeight.w700,
+      color: Colors.grey[800],
+    ),
+  ),
+],
+if (sale.isCustomerLedger) ...[
+  const SizedBox(height: 6),
+  Text(
+    'Venta enviada a libreta',
+    style: TextStyle(
+      fontSize: 12,
+      color: Colors.orange[800],
+      fontWeight: FontWeight.w600,
+    ),
+  ),
+],
             const SizedBox(height: 12),
             Wrap(
               spacing: 12,
@@ -631,29 +831,6 @@ class SaleDetailPage extends StatelessWidget {
     required this.sale,
   });
 
-  String _formatCurrency(double value) {
-    return '\$${value.toStringAsFixed(2)} MXN';
-  }
-
-  String _two(int n) => n.toString().padLeft(2, '0');
-
-  String _formatDate(DateTime date) {
-    return '${_two(date.day)}/${_two(date.month)}/${date.year} ${_two(date.hour)}:${_two(date.minute)}';
-  }
-
-  String _paymentMethodLabel(String method) {
-    switch (method) {
-      case 'cash':
-        return 'Efectivo';
-      case 'transfer':
-        return 'Transferencia';
-      case 'point':
-        return 'Tarjeta / Point';
-      default:
-        return method;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final totalItems = sale.items.fold<int>(
@@ -687,7 +864,7 @@ class SaleDetailPage extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Venta #${sale.id}',
+                  _buildSaleFolio(sale),
                   style: const TextStyle(
                     fontWeight: FontWeight.w800,
                     fontSize: 16,
@@ -710,9 +887,17 @@ class SaleDetailPage extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 14),
-                Text('Fecha: ${_formatDate(sale.createdAt)}'),
-                const SizedBox(height: 4),
-                Text('Método de pago: ${_paymentMethodLabel(sale.paymentMethod)}'),
+Text('Fecha: ${_formatDate(sale.createdAt)}'),
+if (sale.customerName != null && sale.customerName!.trim().isNotEmpty) ...[
+  const SizedBox(height: 4),
+  Text('Cliente: ${sale.customerName!}'),
+],
+const SizedBox(height: 4),
+Text('Método de pago: ${_paymentMethodLabel(sale.paymentMethod)}'),
+if (sale.isCustomerLedger) ...[
+  const SizedBox(height: 4),
+  const Text('Tipo: Venta enviada a libreta'),
+],
                 if (sale.amountReceived != null) ...[
                   const SizedBox(height: 4),
                   Text('Monto recibido: ${_formatCurrency(sale.amountReceived!)}'),
@@ -726,6 +911,22 @@ class SaleDetailPage extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text('Referencia: ${sale.transferReference!}'),
                 ],
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => SaleTicketPreviewPage(sale: sale),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.receipt_long),
+                    label: const Text('Ver ticket'),
+                  ),
+                ),
               ],
             ),
           ),
@@ -757,7 +958,10 @@ class SaleDetailPage extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _SaleDetailThumbnail(imageUrl: item.imageUrl),
+                  _SaleDetailThumbnail(
+                    imageUrl: item.imageUrl,
+                    localImagePath: item.localImagePath,
+                  ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -810,16 +1014,325 @@ class SaleDetailPage extends StatelessWidget {
   }
 }
 
+class SaleTicketPreviewPage extends StatelessWidget {
+  final Sale sale;
+
+  const SaleTicketPreviewPage({
+    super.key,
+    required this.sale,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final totalItems = sale.items.fold<int>(
+      0,
+      (sum, item) => sum + item.quantity,
+    );
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Ticket'),
+        centerTitle: true,
+      ),
+      body: BlocBuilder<ShopBloc, ShopState>(
+        builder: (context, shopState) {
+          String shopName = 'Mi tienda';
+          String address1 = '';
+          String address2 = '';
+          String phone = '';
+          String footer = '';
+
+          if (shopState is ShopLoaded) {
+            shopName = shopState.shop.name;
+            address1 = shopState.shop.addressLine1;
+            address2 = shopState.shop.addressLine2;
+            phone = shopState.shop.phoneNumber;
+            footer = shopState.shop.footerText;
+          }
+
+          return Container(
+            color: const Color(0xFFF3F4F6),
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Center(
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.06),
+                          blurRadius: 16,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Text(
+                          shopName,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        if (address1.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            address1,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey[700]),
+                          ),
+                        ],
+                        if (address2.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            address2,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey[700]),
+                          ),
+                        ],
+                        if (phone.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            'Tel. $phone',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey[700]),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        const Divider(),
+                        const SizedBox(height: 8),
+                        _TicketRow(label: 'Folio', value: _buildSaleFolio(sale)),
+                        const SizedBox(height: 4),
+_TicketRow(label: 'Fecha', value: _formatDate(sale.createdAt)),
+if (sale.customerName != null && sale.customerName!.trim().isNotEmpty) ...[
+  const SizedBox(height: 4),
+  _TicketRow(label: 'Cliente', value: sale.customerName!),
+],
+const SizedBox(height: 4),
+_TicketRow(
+  label: 'Pago',
+  value: _paymentMethodLabel(sale.paymentMethod),
+),
+if (sale.isCustomerLedger) ...[
+  const SizedBox(height: 4),
+  const _TicketRow(
+    label: 'Tipo',
+    value: 'Venta enviada a libreta',
+  ),
+],
+                        if (sale.amountReceived != null) ...[
+                          const SizedBox(height: 4),
+                          _TicketRow(
+                            label: 'Recibido',
+                            value: _formatCurrency(sale.amountReceived!),
+                          ),
+                        ],
+                        if (sale.changeAmount != null) ...[
+                          const SizedBox(height: 4),
+                          _TicketRow(
+                            label: 'Cambio',
+                            value: _formatCurrency(sale.changeAmount!),
+                          ),
+                        ],
+                        if (sale.transferReference != null &&
+                            sale.transferReference!.trim().isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          _TicketRow(
+                            label: 'Referencia',
+                            value: sale.transferReference!,
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        const Divider(),
+                        const SizedBox(height: 12),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'Productos',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: Colors.grey[800],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        ...sale.items.map(
+                          (item) => Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.productName,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '${item.quantity} x ${_formatCurrency(item.unitPrice)}',
+                                        style: TextStyle(
+                                          color: Colors.grey[700],
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Text(
+                                      _formatCurrency(item.total),
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        const Divider(),
+                        const SizedBox(height: 12),
+                        _TicketRow(
+                          label: 'Artículos',
+                          value: '$totalItems',
+                        ),
+                        const SizedBox(height: 6),
+                        _TicketRow(
+                          label: 'Subtotal',
+                          value: _formatCurrency(sale.subtotal),
+                        ),
+                        const SizedBox(height: 6),
+                        _TicketRow(
+                          label: 'Descuento',
+                          value: _formatCurrency(sale.discount),
+                        ),
+                        const SizedBox(height: 10),
+                        _TicketRow(
+                          label: 'TOTAL',
+                          value: _formatCurrency(sale.total),
+                          highlight: true,
+                        ),
+                        if (footer.isNotEmpty) ...[
+                          const SizedBox(height: 18),
+                          const Divider(),
+                          const SizedBox(height: 12),
+                          Text(
+                            footer,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.grey[700],
+                              height: 1.4,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _TicketRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool highlight;
+
+  const _TicketRow({
+    required this.label,
+    required this.value,
+    this.highlight = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final style = TextStyle(
+      fontSize: highlight ? 16 : 13,
+      fontWeight: highlight ? FontWeight.w800 : FontWeight.w600,
+      color: highlight ? const Color(0xFF111827) : Colors.black87,
+    );
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: style,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            style: style,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _SalesSection {
   final String key;
   final String title;
   final List<Sale> sales;
+  final DateTime sortDate;
+  final bool isToday;
 
   _SalesSection({
     required this.key,
     required this.title,
     required this.sales,
+    required this.sortDate,
+    required this.isToday,
   });
+}
+
+class _SectionHeaderDelegate extends SliverPersistentHeaderDelegate {
+  final double height;
+  final Widget child;
+
+  _SectionHeaderDelegate({
+    required this.height,
+    required this.child,
+  });
+
+  @override
+  double get minExtent => height;
+
+  @override
+  double get maxExtent => height;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return child;
+  }
+
+  @override
+  bool shouldRebuild(covariant _SectionHeaderDelegate oldDelegate) {
+    return oldDelegate.height != height || oldDelegate.child != child;
+  }
 }
 
 class _HistorySummaryCard extends StatelessWidget {
@@ -926,13 +1439,31 @@ class _HistoryInfoChip extends StatelessWidget {
 
 class _SaleDetailThumbnail extends StatelessWidget {
   final String? imageUrl;
+  final String? localImagePath;
 
   const _SaleDetailThumbnail({
     required this.imageUrl,
+    required this.localImagePath,
   });
 
   @override
   Widget build(BuildContext context) {
+    if (localImagePath != null && localImagePath!.trim().isNotEmpty) {
+      final file = File(localImagePath!);
+
+      if (file.existsSync()) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.file(
+            file,
+            width: 58,
+            height: 58,
+            fit: BoxFit.cover,
+          ),
+        );
+      }
+    }
+
     if (imageUrl == null || imageUrl!.trim().isEmpty) {
       return Container(
         width: 58,

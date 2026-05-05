@@ -10,7 +10,8 @@ enum PrinterStatus {
   connected,
   connectionFailure,
   disconnected,
-  testPrinting
+  testPrinting, 
+  error,
 }
 
 class PrinterState extends Equatable {

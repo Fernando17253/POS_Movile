@@ -8,10 +8,14 @@ class Sale extends Equatable {
   final double subtotal;
   final double discount;
   final double total;
-  final String paymentMethod; // cash | transfer | point
+  final String paymentMethod; // cash | transfer | point | customer_ledger
   final double? amountReceived;
   final double? changeAmount;
   final String? transferReference;
+
+  final String? customerId;
+  final String? customerName;
+  final bool isCustomerLedger;
 
   const Sale({
     required this.id,
@@ -24,6 +28,9 @@ class Sale extends Equatable {
     this.amountReceived,
     this.changeAmount,
     this.transferReference,
+    this.customerId,
+    this.customerName,
+    this.isCustomerLedger = false,
   });
 
   @override
@@ -38,5 +45,8 @@ class Sale extends Equatable {
         amountReceived,
         changeAmount,
         transferReference,
+        customerId,
+        customerName,
+        isCustomerLedger,
       ];
 }

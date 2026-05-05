@@ -1,13 +1,17 @@
+import 'dart:io';
+
+import 'package:billing_app/core/services/product_image_service.dart';
+import 'package:billing_app/core/theme/app_theme.dart';
+import 'package:billing_app/core/utils/app_validators.dart';
 import 'package:billing_app/core/widgets/input_label.dart';
 import 'package:billing_app/core/widgets/primary_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../bloc/product_bloc.dart';
 import '../../domain/entities/product.dart';
-import '../../../../core/theme/app_theme.dart';
-import '../../../../core/utils/app_validators.dart';
 
 class EditProductPage extends StatefulWidget {
   final Product product;
@@ -23,6 +27,7 @@ class EditProductPage extends StatefulWidget {
 
 class _EditProductPageState extends State<EditProductPage> {
   final _formKey = GlobalKey<FormState>();
+  final ImagePicker _imagePicker = ImagePicker();
 
   late final TextEditingController _barcodeController;
   late final TextEditingController _internalCodeController;
@@ -36,6 +41,12 @@ class _EditProductPageState extends State<EditProductPage> {
   late bool _withoutBarcode;
   late String _selectedUnitType;
   late bool _isWeighable;
+
+  File? _selectedImageFile;
+  late String? _existingLocalImagePath;
+  late String? _existingImageUrl;
+  bool _removeImage = false;
+  bool _isSavingImage = false;
 
   static const List<Map<String, String>> _unitOptions = [
     {'value': 'piece', 'label': 'Pieza'},
@@ -55,6 +66,9 @@ class _EditProductPageState extends State<EditProductPage> {
         widget.product.barcode == null || widget.product.barcode!.trim().isEmpty;
     _selectedUnitType = widget.product.unitType;
     _isWeighable = widget.product.isWeighable;
+
+    _existingLocalImagePath = widget.product.localImagePath;
+    _existingImageUrl = widget.product.imageUrl;
 
     _barcodeController =
         TextEditingController(text: widget.product.barcode ?? '');
@@ -116,7 +130,80 @@ class _EditProductPageState extends State<EditProductPage> {
     );
   }
 
-  void _submit() {
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final pickedFile = await _imagePicker.pickImage(
+        source: source,
+        imageQuality: 90,
+      );
+
+      if (pickedFile == null) return;
+
+      setState(() {
+        _selectedImageFile = File(pickedFile.path);
+        _removeImage = false;
+      });
+    } catch (_) {
+      _showError('No se pudo seleccionar la imagen.');
+    }
+  }
+
+  Future<void> _showImageSourceSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        final hasAnyImage = _selectedImageFile != null ||
+            (!_removeImage &&
+                ((_existingLocalImagePath != null &&
+                        _existingLocalImagePath!.isNotEmpty) ||
+                    (_existingImageUrl != null && _existingImageUrl!.isNotEmpty)));
+
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: const Text('Tomar foto'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickImage(ImageSource.camera);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Elegir de galería'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _pickImage(ImageSource.gallery);
+                },
+              ),
+              if (hasAnyImage)
+                ListTile(
+                  leading: const Icon(
+                    Icons.delete_outline,
+                    color: Colors.red,
+                  ),
+                  title: const Text(
+                    'Quitar imagen',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    setState(() {
+                      _selectedImageFile = null;
+                      _removeImage = true;
+                    });
+                  },
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
     final rawBarcode = _barcodeController.text.trim();
@@ -147,6 +234,30 @@ class _EditProductPageState extends State<EditProductPage> {
       return;
     }
 
+    setState(() {
+      _isSavingImage = true;
+    });
+
+    String? finalLocalImagePath = _existingLocalImagePath;
+    String? finalImageUrl = _existingImageUrl;
+
+    if (_removeImage) {
+      await ProductImageService().deleteLocalImage(_existingLocalImagePath);
+      finalLocalImagePath = null;
+      finalImageUrl = null;
+    } else if (_selectedImageFile != null) {
+      await ProductImageService().deleteLocalImage(_existingLocalImagePath);
+
+      finalLocalImagePath = await ProductImageService().saveFileImageLocally(
+        sourceFile: _selectedImageFile!,
+        productId: widget.product.id,
+      );
+
+      finalImageUrl = null;
+    }
+
+    if (!mounted) return;
+
     final updatedProduct = Product(
       id: widget.product.id,
       internalCode: internalCode,
@@ -155,7 +266,8 @@ class _EditProductPageState extends State<EditProductPage> {
       brand: _brandController.text.trim().isEmpty
           ? null
           : _brandController.text.trim(),
-      imageUrl: widget.product.imageUrl,
+      imageUrl: finalImageUrl,
+      localImagePath: finalLocalImagePath,
       categoryId: widget.product.categoryId,
       price: _parseDouble(_priceController.text),
       cost: _parseDouble(_costController.text),
@@ -167,13 +279,24 @@ class _EditProductPageState extends State<EditProductPage> {
     );
 
     context.read<ProductBloc>().add(UpdateProduct(updatedProduct));
+
+    setState(() {
+      _isSavingImage = false;
+    });
+
     context.pop();
   }
 
   @override
   Widget build(BuildContext context) {
-    final hasImage = widget.product.imageUrl != null &&
-        widget.product.imageUrl!.trim().isNotEmpty;
+    final hasLocalImage = !_removeImage &&
+        _existingLocalImagePath != null &&
+        _existingLocalImagePath!.isNotEmpty &&
+        File(_existingLocalImagePath!).existsSync();
+
+    final hasNetworkImage = !_removeImage &&
+        _existingImageUrl != null &&
+        _existingImageUrl!.trim().isNotEmpty;
 
     return Scaffold(
       appBar: AppBar(
@@ -252,7 +375,6 @@ class _EditProductPageState extends State<EditProductPage> {
                     ),
                   ),
                 ],
-
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Producto sin código de barras'),
@@ -270,7 +392,6 @@ class _EditProductPageState extends State<EditProductPage> {
                   },
                 ),
                 const SizedBox(height: 16),
-
                 if (!_withoutBarcode) ...[
                   const InputLabel(text: 'Código de barras'),
                   TextFormField(
@@ -286,7 +407,6 @@ class _EditProductPageState extends State<EditProductPage> {
                   ),
                   const SizedBox(height: 24),
                 ],
-
                 const InputLabel(text: 'Identificador interno'),
                 TextFormField(
                   controller: _internalCodeController,
@@ -298,7 +418,6 @@ class _EditProductPageState extends State<EditProductPage> {
                   ),
                 ),
                 const SizedBox(height: 24),
-
                 const InputLabel(text: 'Nombre del producto'),
                 TextFormField(
                   controller: _nameController,
@@ -311,7 +430,6 @@ class _EditProductPageState extends State<EditProductPage> {
                   ),
                 ),
                 const SizedBox(height: 24),
-
                 const InputLabel(text: 'Marca (opcional)'),
                 TextFormField(
                   controller: _brandController,
@@ -321,7 +439,6 @@ class _EditProductPageState extends State<EditProductPage> {
                   ),
                 ),
                 const SizedBox(height: 24),
-
                 const InputLabel(text: 'Precio de venta'),
                 TextFormField(
                   controller: _priceController,
@@ -335,7 +452,6 @@ class _EditProductPageState extends State<EditProductPage> {
                       _requiredNumberValidator(v, 'Ingresa el precio de venta'),
                 ),
                 const SizedBox(height: 24),
-
                 const InputLabel(text: 'Costo de compra'),
                 TextFormField(
                   controller: _costController,
@@ -349,7 +465,6 @@ class _EditProductPageState extends State<EditProductPage> {
                       _requiredNumberValidator(v, 'Ingresa el costo de compra'),
                 ),
                 const SizedBox(height: 24),
-
                 const InputLabel(text: 'Stock actual'),
                 TextFormField(
                   controller: _stockController,
@@ -362,7 +477,6 @@ class _EditProductPageState extends State<EditProductPage> {
                       _requiredNumberValidator(v, 'Ingresa el stock actual'),
                 ),
                 const SizedBox(height: 24),
-
                 const InputLabel(text: 'Stock mínimo'),
                 TextFormField(
                   controller: _minStockController,
@@ -375,7 +489,6 @@ class _EditProductPageState extends State<EditProductPage> {
                       _requiredNumberValidator(v, 'Ingresa el stock mínimo'),
                 ),
                 const SizedBox(height: 24),
-
                 const InputLabel(text: 'Unidad de venta'),
                 DropdownButtonFormField<String>(
                   value: _selectedUnitType,
@@ -398,7 +511,6 @@ class _EditProductPageState extends State<EditProductPage> {
                   ),
                 ),
                 const SizedBox(height: 16),
-
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Producto pesable'),
@@ -412,41 +524,118 @@ class _EditProductPageState extends State<EditProductPage> {
                     });
                   },
                 ),
-
-                if (hasImage) ...[
-                  const SizedBox(height: 16),
-                  const InputLabel(text: 'Imagen del producto'),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: Image.network(
-                      widget.product.imageUrl!,
-                      height: 180,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) {
-                        return Container(
-                          height: 180,
-                          width: double.infinity,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          child: const Text('No se pudo cargar la imagen'),
-                        );
-                      },
+                const SizedBox(height: 16),
+                const InputLabel(text: 'Imagen del producto'),
+                const SizedBox(height: 8),
+                InkWell(
+                  onTap: _showImageSourceSheet,
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    width: double.infinity,
+                    height: 190,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: Colors.grey.shade300),
                     ),
+                    child: _selectedImageFile != null
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(14),
+                            child: Image.file(
+                              _selectedImageFile!,
+                              fit: BoxFit.cover,
+                            ),
+                          )
+                        : hasLocalImage
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(14),
+                                child: Image.file(
+                                  File(_existingLocalImagePath!),
+                                  fit: BoxFit.cover,
+                                ),
+                              )
+                            : hasNetworkImage
+                                ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(14),
+                                    child: Image.network(
+                                      _existingImageUrl!,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) {
+                                        return const _ImagePlaceholder();
+                                      },
+                                    ),
+                                  )
+                                : const _ImagePlaceholder(),
                   ),
-                ],
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _showImageSourceSheet,
+                      icon: const Icon(Icons.add_a_photo_outlined),
+                      label: const Text('Agregar o cambiar imagen'),
+                    ),
+                    if (_selectedImageFile != null || hasLocalImage || hasNetworkImage)
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            _selectedImageFile = null;
+                            _removeImage = true;
+                          });
+                        },
+                        icon: const Icon(Icons.delete_outline),
+                        label: const Text('Quitar imagen'),
+                      ),
+                  ],
+                ),
               ],
             ),
           ),
         ),
       ),
       bottomNavigationBar: PrimaryButton(
-        onPressed: _submit,
-        icon: Icons.save,
-        label: 'Guardar cambios',
+        onPressed: _isSavingImage ? null : _submit,
+        icon: _isSavingImage ? Icons.hourglass_top : Icons.save,
+        label: _isSavingImage ? 'Guardando imagen...' : 'Guardar cambios',
+      ),
+    );
+  }
+}
+
+class _ImagePlaceholder extends StatelessWidget {
+  const _ImagePlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.image_outlined,
+            size: 42,
+            color: Colors.grey.shade400,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Sin imagen',
+            style: TextStyle(
+              color: Colors.grey.shade600,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Toca para agregar una foto',
+            style: TextStyle(
+              color: Colors.grey.shade500,
+              fontSize: 12,
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -7,6 +7,7 @@ class Product extends Equatable {
   final String internalCode;
   final String name;
   final String? barcode;
+  final String? localImagePath;
 
   // Datos de apoyo
   final String? brand;
@@ -28,6 +29,7 @@ class Product extends Equatable {
     required this.id,
     required this.internalCode,
     required this.name,
+    this.localImagePath,
     this.barcode,
     required this.price,
     this.brand,
@@ -45,6 +47,7 @@ class Product extends Equatable {
     String? id,
     String? internalCode,
     String? name,
+    String? localImagePath,
     Object? barcode = _noChange,
     Object? brand = _noChange,
     Object? imageUrl = _noChange,
@@ -61,6 +64,7 @@ class Product extends Equatable {
       id: id ?? this.id,
       internalCode: internalCode ?? this.internalCode,
       name: name ?? this.name,
+      localImagePath: localImagePath ?? this.localImagePath,
       barcode: barcode == _noChange ? this.barcode : barcode as String?,
       brand: brand == _noChange ? this.brand : brand as String?,
       imageUrl: imageUrl == _noChange ? this.imageUrl : imageUrl as String?,
@@ -80,6 +84,7 @@ class Product extends Equatable {
         id,
         internalCode,
         name,
+        localImagePath,
         barcode,
         brand,
         imageUrl,

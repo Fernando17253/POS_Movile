@@ -36,6 +36,15 @@ class SaleModel extends HiveObject {
   @HiveField(9)
   final String? transferReference;
 
+  @HiveField(10)
+  final String? customerId;
+
+  @HiveField(11)
+  final String? customerName;
+
+  @HiveField(12)
+  final bool isCustomerLedger;
+
   SaleModel({
     required this.id,
     required this.createdAt,
@@ -47,6 +56,9 @@ class SaleModel extends HiveObject {
     this.amountReceived,
     this.changeAmount,
     this.transferReference,
+    this.customerId,
+    this.customerName,
+    this.isCustomerLedger = false,
   });
 
   Sale toEntity() {
@@ -61,6 +73,9 @@ class SaleModel extends HiveObject {
       amountReceived: amountReceived,
       changeAmount: changeAmount,
       transferReference: transferReference,
+      customerId: customerId,
+      customerName: customerName,
+      isCustomerLedger: isCustomerLedger,
     );
   }
 
@@ -76,6 +91,9 @@ class SaleModel extends HiveObject {
       amountReceived: sale.amountReceived,
       changeAmount: sale.changeAmount,
       transferReference: sale.transferReference,
+      customerId: sale.customerId,
+      customerName: sale.customerName,
+      isCustomerLedger: sale.isCustomerLedger,
     );
   }
 }

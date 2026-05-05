@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../bloc/product_bloc.dart';
 import '../../domain/entities/product.dart';
 import '../../../../core/theme/app_theme.dart';
+import 'dart:io';
 
 class ProductListPage extends StatefulWidget {
   const ProductListPage({super.key});
@@ -258,8 +259,15 @@ class _ProductCard extends StatelessWidget {
       ),
       padding: const EdgeInsets.all(16),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _ProductThumbnail(
+            imageUrl: product.imageUrl,
+            localImagePath: product.localImagePath,
+            width: 64,
+            height: 64,
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -324,8 +332,83 @@ class _ProductCard extends StatelessWidget {
               ],
             ),
           ),
+          const SizedBox(width: 8),
           _ActionButtons(product: product),
         ],
+      ),
+    );
+  }
+}
+
+class _ProductThumbnail extends StatelessWidget {
+  final String? imageUrl;
+  final String? localImagePath;
+  final double width;
+  final double height;
+
+  const _ProductThumbnail({
+    required this.imageUrl,
+    required this.localImagePath,
+    this.width = 64,
+    this.height = 64,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (localImagePath != null && localImagePath!.trim().isNotEmpty) {
+      final file = File(localImagePath!);
+
+      if (file.existsSync()) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.file(
+            file,
+            width: width,
+            height: height,
+            fit: BoxFit.cover,
+          ),
+        );
+      }
+    }
+
+    if (imageUrl != null && imageUrl!.trim().isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.network(
+          imageUrl!,
+          width: width,
+          height: height,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) {
+            return Container(
+              width: width,
+              height: height,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              alignment: Alignment.center,
+              child: Icon(
+                Icons.broken_image_outlined,
+                color: Colors.grey.shade400,
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      alignment: Alignment.center,
+      child: Icon(
+        Icons.inventory_2_outlined,
+        color: Colors.grey.shade400,
       ),
     );
   }

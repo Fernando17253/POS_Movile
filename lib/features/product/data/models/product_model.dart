@@ -47,6 +47,9 @@ class ProductModel extends HiveObject {
   @HiveField(13)
   final String internalCode;
 
+  @HiveField(14)
+  final String? localImagePath; 
+
   ProductModel({
     required this.id,
     required this.name,
@@ -62,6 +65,7 @@ class ProductModel extends HiveObject {
     this.isWeighable = false,
     this.source = 'manual',
     this.internalCode = '',
+    this.localImagePath,
   });
 
   Product toEntity() {
@@ -80,6 +84,7 @@ class ProductModel extends HiveObject {
       unitType: unitType,
       isWeighable: isWeighable,
       source: source,
+      localImagePath: localImagePath,
     );
   }
 
@@ -99,6 +104,7 @@ class ProductModel extends HiveObject {
       unitType: product.unitType,
       isWeighable: product.isWeighable,
       source: product.source,
+      localImagePath: product.localImagePath,
     );
   }
 }

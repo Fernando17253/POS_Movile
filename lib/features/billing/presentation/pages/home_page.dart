@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'dart:io';
 
 import '../../../billing/presentation/bloc/billing_bloc.dart';
 import '../../../product/presentation/bloc/product_bloc.dart';
@@ -62,6 +63,34 @@ void dispose() {
     return units[unitType] ?? unitType;
   }
 
+  String _formatStockNumber(double value) {
+  if (value % 1 == 0) {
+    return value.toInt().toString();
+  }
+  return value.toStringAsFixed(2);
+}
+
+bool _hasAvailableStock(Product product) {
+  return product.stock > 0;
+}
+
+List<Product> _sortProductsForCatalog(List<Product> products) {
+  final sorted = [...products];
+
+  sorted.sort((a, b) {
+    final aOut = a.stock <= 0;
+    final bOut = b.stock <= 0;
+
+    if (aOut != bOut) {
+      return aOut ? 1 : -1;
+    }
+
+    return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  });
+
+  return sorted;
+}
+
   String _translateBillingError(String error) {
     if (error.startsWith('Product not found')) {
       return 'Producto no encontrado.';
@@ -102,16 +131,25 @@ void dispose() {
       child: Row(
         children: [
           Expanded(
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Buscar por nombre, marca, código o clave',
-                prefixIcon: Icon(
-                  Icons.search,
-                  color: Colors.grey[400],
-                ),
-              ),
-            ),
+child: TextField(
+  controller: _searchController,
+  decoration: InputDecoration(
+    hintText: 'Buscar por nombre, marca, código o clave',
+    prefixIcon: Icon(
+      Icons.search,
+      color: Colors.grey[400],
+    ),
+    suffixIcon: _searchController.text.isEmpty
+        ? null
+        : IconButton(
+            onPressed: () {
+              _searchController.clear();
+            },
+            icon: const Icon(Icons.close),
+            tooltip: 'Limpiar búsqueda',
+          ),
+  ),
+),
           ),
           const SizedBox(width: 10),
           SizedBox(
@@ -158,14 +196,16 @@ void dispose() {
                   );
                 }
 
-                final filteredProducts = state.products.where((product) {
-                  final query = _searchQuery;
+final filteredProducts = _sortProductsForCatalog(
+  state.products.where((product) {
+    final query = _searchQuery;
 
-                  return product.name.toLowerCase().contains(query) ||
-                      (product.brand?.toLowerCase().contains(query) ?? false) ||
-                      (product.barcode?.toLowerCase().contains(query) ?? false) ||
-                      product.internalCode.toLowerCase().contains(query);
-                }).toList();
+    return product.name.toLowerCase().contains(query) ||
+        (product.brand?.toLowerCase().contains(query) ?? false) ||
+        (product.barcode?.toLowerCase().contains(query) ?? false) ||
+        product.internalCode.toLowerCase().contains(query);
+  }).toList(),
+);
 
                 if (filteredProducts.isEmpty) {
                   return const Center(
@@ -187,18 +227,24 @@ void dispose() {
                             const SizedBox(height: 10),
                         itemBuilder: (context, index) {
                           final product = filteredProducts[index];
+                          final hasStock = _hasAvailableStock(product);
 
-                          return _ProductListSaleCard(
-                            product: product,
-                            currency: _formatCurrency(product.price),
-                            stockText:
-                                '${_formatStock(product)} ${_getUnitLabel(product.unitType)}',
-                            onTap: () {
-                              context.read<BillingBloc>().add(
-                                    AddProductToCartEvent(product),
-                                  );
-                            },
-                          );
+
+return _ProductListSaleCard(
+  product: product,
+  currency: _formatCurrency(product.price),
+  stockText: hasStock
+      ? '${_formatStock(product)} ${_getUnitLabel(product.unitType)}'
+      : 'Sin stock',
+  enabled: hasStock,
+  onTap: hasStock
+      ? () {
+          context.read<BillingBloc>().add(
+                AddProductToCartEvent(product),
+              );
+        }
+      : null,
+);
                         },
                       );
                     }
@@ -219,17 +265,23 @@ void dispose() {
                       itemBuilder: (context, index) {
                         final product = filteredProducts[index];
 
-                        return _ProductSaleCard(
-                          product: product,
-                          currency: _formatCurrency(product.price),
-                          stockText:
-                              '${_formatStock(product)} ${_getUnitLabel(product.unitType)}',
-                          onTap: () {
-                            context.read<BillingBloc>().add(
-                                  AddProductToCartEvent(product),
-                                );
-                          },
-                        );
+final hasStock = _hasAvailableStock(product);
+
+return _ProductSaleCard(
+  product: product,
+  currency: _formatCurrency(product.price),
+  stockText: hasStock
+      ? '${_formatStock(product)} ${_getUnitLabel(product.unitType)}'
+      : 'Sin stock',
+  enabled: hasStock,
+  onTap: hasStock
+      ? () {
+          context.read<BillingBloc>().add(
+                AddProductToCartEvent(product),
+              );
+        }
+      : null,
+);
                       },
                     );
                   },
@@ -539,95 +591,110 @@ Widget _buildCartSheet() {
     );
   }
 
-  Widget _buildCartItemCard(BuildContext context, CartItem item) {
-    final imageUrl = item.product.imageUrl;
+Widget _buildCartItemCard(BuildContext context, CartItem item) {
+  final imageUrl = item.product.imageUrl;
+  final canIncrease = (item.quantity + 1) <= item.product.stock;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[200]!),
-        boxShadow: const [
-          BoxShadow(
-            color: Colors.black12,
-            blurRadius: 4,
-            offset: Offset(0, 2),
+  return Container(
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: Colors.grey[200]!),
+      boxShadow: const [
+        BoxShadow(
+          color: Colors.black12,
+          blurRadius: 4,
+          offset: Offset(0, 2),
+        ),
+      ],
+    ),
+    padding: const EdgeInsets.all(12),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _ProductThumbnail(
+          imageUrl: item.product.imageUrl,
+          localImagePath: item.product.localImagePath,
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                item.product.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _formatCurrency(item.product.price),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  color: Colors.grey[700],
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Subtotal: ${_formatCurrency(item.total)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Stock disponible: ${_formatStockNumber(item.product.stock)}',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _ProductThumbnail(imageUrl: imageUrl),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  item.product.name,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _formatCurrency(item.product.price),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                    color: Colors.grey[700],
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Subtotal: ${_formatCurrency(item.total)}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          _QuantityControl(
-            quantity: item.quantity,
-            onDecrease: () {
-              if (item.quantity > 1) {
-                context.read<BillingBloc>().add(
-                      UpdateQuantityEvent(
-                        item.product.id,
-                        item.quantity - 1,
-                      ),
-                    );
-              } else {
-                context.read<BillingBloc>().add(
-                      RemoveProductFromCartEvent(item.product.id),
-                    );
-              }
-            },
-            onIncrease: () {
+        ),
+        const SizedBox(width: 8),
+        _QuantityControl(
+          quantity: item.quantity,
+          canIncrease: canIncrease,
+          onDecrease: () {
+            if (item.quantity > 1) {
               context.read<BillingBloc>().add(
                     UpdateQuantityEvent(
                       item.product.id,
-                      item.quantity + 1,
+                      item.quantity - 1,
                     ),
                   );
-            },
-          ),
-        ],
-      ),
-    );
-  }
+            } else {
+              context.read<BillingBloc>().add(
+                    RemoveProductFromCartEvent(item.product.id),
+                  );
+            }
+          },
+          onIncrease: canIncrease
+              ? () {
+                  context.read<BillingBloc>().add(
+                        UpdateQuantityEvent(
+                          item.product.id,
+                          item.quantity + 1,
+                        ),
+                      );
+                }
+              : null,
+        ),
+      ],
+    ),
+  );
+}
 
   @override
   Widget build(BuildContext context) {
@@ -779,11 +846,13 @@ class _BottomInfoCard extends StatelessWidget {
 
 class _QuantityControl extends StatelessWidget {
   final int quantity;
+  final bool canIncrease;
   final VoidCallback onDecrease;
-  final VoidCallback onIncrease;
+  final VoidCallback? onIncrease;
 
   const _QuantityControl({
     required this.quantity,
+    required this.canIncrease,
     required this.onDecrease,
     required this.onIncrease,
   });
@@ -802,6 +871,7 @@ class _QuantityControl extends StatelessWidget {
           _SmallIconButton(
             icon: Icons.remove,
             onTap: onDecrease,
+            enabled: true,
           ),
           SizedBox(
             width: 32,
@@ -814,6 +884,7 @@ class _QuantityControl extends StatelessWidget {
           _SmallIconButton(
             icon: Icons.add,
             onTap: onIncrease,
+            enabled: canIncrease,
           ),
         ],
       ),
@@ -823,24 +894,26 @@ class _QuantityControl extends StatelessWidget {
 
 class _SmallIconButton extends StatelessWidget {
   final IconData icon;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+  final bool enabled;
 
   const _SmallIconButton({
     required this.icon,
     required this.onTap,
+    this.enabled = true,
   });
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: onTap,
+      onTap: enabled ? onTap : null,
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.all(4),
         child: Icon(
           icon,
           size: 20,
-          color: Colors.grey[700],
+          color: enabled ? Colors.grey[700] : Colors.grey[350],
         ),
       ),
     );
@@ -851,97 +924,116 @@ class _ProductListSaleCard extends StatelessWidget {
   final Product product;
   final String currency;
   final String stockText;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+  final bool enabled;
 
   const _ProductListSaleCard({
     required this.product,
     required this.currency,
     required this.stockText,
     required this.onTap,
+    required this.enabled,
   });
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.grey.shade200),
-          boxShadow: const [
-            BoxShadow(
-              color: Colors.black12,
-              blurRadius: 4,
-              offset: Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _ProductThumbnail(
-              imageUrl: product.imageUrl,
-              width: 64,
-              height: 64,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    product.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14,
+    final borderColor = enabled ? Colors.grey.shade200 : Colors.grey.shade300;
+    final cardColor = enabled ? Colors.white : Colors.grey.shade100;
+    final primaryTextColor = enabled ? Colors.black87 : Colors.grey.shade500;
+    final secondaryTextColor = enabled ? Colors.grey.shade600 : Colors.grey.shade500;
+
+    return Opacity(
+      opacity: enabled ? 1 : 0.72,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: cardColor,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: borderColor),
+            boxShadow: enabled
+                ? const [
+                    BoxShadow(
+                      color: Colors.black12,
+                      blurRadius: 4,
+                      offset: Offset(0, 2),
                     ),
-                  ),
-                  if (product.brand?.isNotEmpty ?? false) ...[
+                  ]
+                : [],
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _ProductThumbnail(
+                imageUrl: product.imageUrl,
+                localImagePath: product.localImagePath,
+                width: 64,
+                height: 64,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      product.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                        color: primaryTextColor,
+                      ),
+                    ),
+                    if (product.brand?.isNotEmpty ?? false) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        product.brand!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: secondaryTextColor,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 6),
+                    Text(
+                      currency,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: enabled
+                            ? Theme.of(context).primaryColor
+                            : Colors.grey.shade500,
+                      ),
+                    ),
                     const SizedBox(height: 4),
                     Text(
-                      product.brand!,
+                      stockText,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 12,
-                        color: Colors.grey[600],
+                        color: enabled ? secondaryTextColor : Colors.redAccent,
+                        fontWeight: enabled ? FontWeight.w500 : FontWeight.w700,
                       ),
                     ),
                   ],
-                  const SizedBox(height: 6),
-                  Text(
-                    currency,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: Theme.of(context).primaryColor,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    stockText,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                ],
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Icon(
-              Icons.add_circle,
-              color: Theme.of(context).primaryColor,
-            ),
-          ],
+              const SizedBox(width: 8),
+              Icon(
+                enabled ? Icons.add_circle : Icons.block,
+                color: enabled
+                    ? Theme.of(context).primaryColor
+                    : Colors.grey.shade400,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -952,86 +1044,100 @@ class _ProductSaleCard extends StatelessWidget {
   final Product product;
   final String currency;
   final String stockText;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+  final bool enabled;
 
   const _ProductSaleCard({
     required this.product,
     required this.currency,
     required this.stockText,
     required this.onTap,
+    required this.enabled,
   });
 
   @override
   Widget build(BuildContext context) {
     final imageUrl = product.imageUrl;
 
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.grey.shade200),
-          boxShadow: const [
-            BoxShadow(
-              color: Colors.black12,
-              blurRadius: 4,
-              offset: Offset(0, 2),
+    return Opacity(
+      opacity: enabled ? 1 : 0.72,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          decoration: BoxDecoration(
+            color: enabled ? Colors.white : Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: enabled ? Colors.grey.shade200 : Colors.grey.shade300,
             ),
-          ],
-        ),
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _ProductThumbnail(
-              imageUrl: imageUrl,
-              height: 92,
-              width: double.infinity,
-            ),
-            const SizedBox(height: 10),
-            Text(
-              product.name,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 14,
+            boxShadow: enabled
+                ? const [
+                    BoxShadow(
+                      color: Colors.black12,
+                      blurRadius: 4,
+                      offset: Offset(0, 2),
+                    ),
+                  ]
+                : [],
+          ),
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _ProductThumbnail(
+                imageUrl: imageUrl,
+                localImagePath: product.localImagePath,
+                height: 92,
+                width: double.infinity,
               ),
-            ),
-            const SizedBox(height: 4),
-            if (product.brand?.isNotEmpty ?? false)
+              const SizedBox(height: 10),
               Text(
-                product.brand!,
+                product.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                  color: enabled ? Colors.black87 : Colors.grey.shade500,
+                ),
+              ),
+              const SizedBox(height: 4),
+              if (product.brand?.isNotEmpty ?? false)
+                Text(
+                  product.brand!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: enabled ? Colors.grey[600] : Colors.grey.shade500,
+                  ),
+                ),
+              const Spacer(),
+              Text(
+                currency,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: enabled
+                      ? Theme.of(context).primaryColor
+                      : Colors.grey.shade500,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                stockText,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 12,
-                  color: Colors.grey[600],
+                  color: enabled ? Colors.grey[600] : Colors.redAccent,
+                  fontWeight: enabled ? FontWeight.w500 : FontWeight.w700,
                 ),
               ),
-            const Spacer(),
-            Text(
-              currency,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                color: Theme.of(context).primaryColor,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              stockText,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[600],
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1040,55 +1146,73 @@ class _ProductSaleCard extends StatelessWidget {
 
 class _ProductThumbnail extends StatelessWidget {
   final String? imageUrl;
+  final String? localImagePath;
   final double height;
   final double width;
 
   const _ProductThumbnail({
     required this.imageUrl,
+    required this.localImagePath,
     this.height = 56,
     this.width = 56,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (imageUrl == null || imageUrl!.trim().isEmpty) {
-      return Container(
-        height: height,
-        width: width,
-        decoration: BoxDecoration(
-          color: Colors.grey.shade100,
+    if (localImagePath != null && localImagePath!.trim().isNotEmpty) {
+      final file = File(localImagePath!);
+
+      if (file.existsSync()) {
+        return ClipRRect(
           borderRadius: BorderRadius.circular(12),
-        ),
-        alignment: Alignment.center,
-        child: Icon(
-          Icons.inventory_2_outlined,
-          color: Colors.grey.shade400,
+          child: Image.file(
+            file,
+            height: height,
+            width: width,
+            fit: BoxFit.cover,
+          ),
+        );
+      }
+    }
+
+    if (imageUrl != null && imageUrl!.trim().isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.network(
+          imageUrl!,
+          height: height,
+          width: width,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) {
+            return Container(
+              height: height,
+              width: width,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              alignment: Alignment.center,
+              child: Icon(
+                Icons.broken_image_outlined,
+                color: Colors.grey.shade400,
+              ),
+            );
+          },
         ),
       );
     }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Image.network(
-        imageUrl!,
-        height: height,
-        width: width,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) {
-          return Container(
-            height: height,
-            width: width,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            alignment: Alignment.center,
-            child: Icon(
-              Icons.broken_image_outlined,
-              color: Colors.grey.shade400,
-            ),
-          );
-        },
+    return Container(
+      height: height,
+      width: width,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      alignment: Alignment.center,
+      child: Icon(
+        Icons.inventory_2_outlined,
+        color: Colors.grey.shade400,
       ),
     );
   }

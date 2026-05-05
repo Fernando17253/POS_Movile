@@ -34,25 +34,56 @@ class BillingBloc extends Bloc<BillingEvent, BillingState> {
     );
   }
 
-  void _onAddProductToCart(
-      AddProductToCartEvent event, Emitter<BillingState> emit) {
-    // Clear error when adding
-    final cleanState = state.copyWith(error: null);
+  void _emitTransientError(Emitter<BillingState> emit, String message) {
+  emit(state.copyWith(error: message));
+  emit(state.copyWith(clearError: true));
+}
 
-    final existingIndex = cleanState.cartItems
-        .indexWhere((item) => item.product.id == event.product.id);
-    if (existingIndex >= 0) {
-      final existingItem = cleanState.cartItems[existingIndex];
-      final backendItems = List<CartItem>.from(cleanState.cartItems);
-      backendItems[existingIndex] =
-          existingItem.copyWith(quantity: existingItem.quantity + 1);
-      emit(cleanState.copyWith(cartItems: backendItems, error: null));
-    } else {
-      final newItem = CartItem(product: event.product);
-      emit(cleanState.copyWith(
-          cartItems: [...cleanState.cartItems, newItem], error: null));
-    }
+void _onAddProductToCart(
+  AddProductToCartEvent event,
+  Emitter<BillingState> emit,
+) {
+  final cleanState = state.copyWith(error: null);
+
+  if (event.product.stock <= 0) {
+    _emitTransientError(
+      emit,
+      'El producto "${event.product.name}" no tiene stock disponible.',
+    );
+    return;
   }
+
+  final existingIndex = cleanState.cartItems.indexWhere(
+    (item) => item.product.id == event.product.id,
+  );
+
+  if (existingIndex >= 0) {
+    final existingItem = cleanState.cartItems[existingIndex];
+    final nextQuantity = existingItem.quantity + 1;
+
+    if (nextQuantity > event.product.stock) {
+      _emitTransientError(
+        emit,
+        'Solo hay ${event.product.stock % 1 == 0 ? event.product.stock.toInt() : event.product.stock} unidades disponibles de "${event.product.name}".',
+      );
+      return;
+    }
+
+    final updatedItems = List<CartItem>.from(cleanState.cartItems);
+    updatedItems[existingIndex] =
+        existingItem.copyWith(quantity: nextQuantity);
+
+    emit(cleanState.copyWith(cartItems: updatedItems, error: null));
+  } else {
+    final newItem = CartItem(product: event.product);
+    emit(
+      cleanState.copyWith(
+        cartItems: [...cleanState.cartItems, newItem],
+        error: null,
+      ),
+    );
+  }
+}
 
   void _onRemoveProductFromCart(
       RemoveProductFromCartEvent event, Emitter<BillingState> emit) {
@@ -62,21 +93,35 @@ class BillingBloc extends Bloc<BillingEvent, BillingState> {
     emit(state.copyWith(cartItems: updatedList));
   }
 
-  void _onUpdateQuantity(
-      UpdateQuantityEvent event, Emitter<BillingState> emit) {
-    if (event.quantity <= 0) {
-      add(RemoveProductFromCartEvent(event.productId));
+void _onUpdateQuantity(
+  UpdateQuantityEvent event,
+  Emitter<BillingState> emit,
+) {
+  if (event.quantity <= 0) {
+    add(RemoveProductFromCartEvent(event.productId));
+    return;
+  }
+
+  final index = state.cartItems.indexWhere(
+    (item) => item.product.id == event.productId,
+  );
+
+  if (index >= 0) {
+    final currentItem = state.cartItems[index];
+
+    if (event.quantity > currentItem.product.stock) {
+      _emitTransientError(
+        emit,
+        'No puedes agregar más de ${currentItem.product.stock % 1 == 0 ? currentItem.product.stock.toInt() : currentItem.product.stock} unidades de "${currentItem.product.name}".',
+      );
       return;
     }
 
-    final index = state.cartItems
-        .indexWhere((item) => item.product.id == event.productId);
-    if (index >= 0) {
-      final items = List<CartItem>.from(state.cartItems);
-      items[index] = items[index].copyWith(quantity: event.quantity);
-      emit(state.copyWith(cartItems: items));
-    }
+    final items = List<CartItem>.from(state.cartItems);
+    items[index] = items[index].copyWith(quantity: event.quantity);
+    emit(state.copyWith(cartItems: items, clearError: true));
   }
+}
 
   void _onClearCart(ClearCartEvent event, Emitter<BillingState> emit) {
     emit(const BillingState());

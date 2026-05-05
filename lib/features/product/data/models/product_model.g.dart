@@ -31,13 +31,14 @@ class ProductModelAdapter extends TypeAdapter<ProductModel> {
       isWeighable: fields[11] as bool,
       source: fields[12] as String,
       internalCode: fields[13] as String,
+      localImagePath: fields[14] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, ProductModel obj) {
     writer
-      ..writeByte(14)
+      ..writeByte(15)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -65,7 +66,9 @@ class ProductModelAdapter extends TypeAdapter<ProductModel> {
       ..writeByte(12)
       ..write(obj.source)
       ..writeByte(13)
-      ..write(obj.internalCode);
+      ..write(obj.internalCode)
+      ..writeByte(14)
+      ..write(obj.localImagePath);
   }
 
   @override

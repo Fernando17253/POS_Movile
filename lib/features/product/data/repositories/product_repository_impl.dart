@@ -1,11 +1,14 @@
 import 'package:fpdart/fpdart.dart';
 import '../../../../core/data/hive_database.dart';
 import '../../../../core/error/failure.dart';
+import '../../../../core/services/product_image_service.dart';
 import '../../domain/entities/product.dart';
 import '../../domain/repositories/product_repository.dart';
 import '../models/product_model.dart';
 
 class ProductRepositoryImpl implements ProductRepository {
+  final ProductImageService _productImageService = ProductImageService();
+
   @override
   Future<Either<Failure, List<Product>>> getProducts() async {
     try {
@@ -90,6 +93,13 @@ class ProductRepositoryImpl implements ProductRepository {
   Future<Either<Failure, void>> deleteProduct(String id) async {
     try {
       final box = HiveDatabase.productBox;
+      final productModel = box.get(id);
+
+      if (productModel != null) {
+        await _productImageService.deleteLocalImage(
+          productModel.localImagePath,
+        );
+      }
 
       await box.delete(id);
 
