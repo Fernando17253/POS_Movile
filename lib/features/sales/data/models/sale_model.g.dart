@@ -30,13 +30,16 @@ class SaleModelAdapter extends TypeAdapter<SaleModel> {
       customerId: fields[10] as String?,
       customerName: fields[11] as String?,
       isCustomerLedger: fields[12] as bool,
+      isPartialCustomerLedger: fields[13] as bool,
+      paidAmount: fields[14] as double?,
+      pendingAmount: fields[15] as double?,
     );
   }
 
   @override
   void write(BinaryWriter writer, SaleModel obj) {
     writer
-      ..writeByte(13)
+      ..writeByte(16)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -62,7 +65,13 @@ class SaleModelAdapter extends TypeAdapter<SaleModel> {
       ..writeByte(11)
       ..write(obj.customerName)
       ..writeByte(12)
-      ..write(obj.isCustomerLedger);
+      ..write(obj.isCustomerLedger)
+      ..writeByte(13)
+      ..write(obj.isPartialCustomerLedger)
+      ..writeByte(14)
+      ..write(obj.paidAmount)
+      ..writeByte(15)
+      ..write(obj.pendingAmount);
   }
 
   @override

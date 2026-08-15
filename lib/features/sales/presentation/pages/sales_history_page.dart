@@ -6,6 +6,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../shop/presentation/bloc/shop_bloc.dart';
 import '../../data/repositories/sales_repository_impl.dart';
 import '../../domain/entities/sale.dart';
+import '../../../customers/data/repositories/customer_repository_impl.dart';
+import '../../../customers/domain/entities/customer_debt_cycle.dart';
+import '../../../customers/domain/entities/customer_ledger_entry.dart';
 
 String _two(int n) => n.toString().padLeft(2, '0');
 
@@ -66,6 +69,16 @@ Color _paymentMethodColor(String method) {
   }
 }
 
+String _ledgerTypeLabel(Sale sale) {
+  if (!sale.isCustomerLedger) return '';
+
+  if (sale.isPartialCustomerLedger) {
+    return 'Venta con pago parcial';
+  }
+
+  return 'Venta enviada a libreta';
+}
+
 String _buildSaleFolio(Sale sale) {
   final date = sale.createdAt;
   final datePart = '${date.year}${_two(date.month)}${_two(date.day)}';
@@ -104,7 +117,15 @@ String _buildSaleSearchIndex(Sale sale) {
   final reference = sale.transferReference ?? '';
   final folio = _buildSaleFolio(sale);
   final customerName = sale.customerName ?? '';
-  final ledgerTerms = sale.isCustomerLedger ? 'libreta adeudo cliente' : '';
+  final ledgerTerms = sale.isCustomerLedger
+    ? sale.isPartialCustomerLedger
+        ? 'libreta adeudo cliente pago parcial pendiente abonado'
+        : 'libreta adeudo cliente adeudo completo'
+    : '';
+
+  final paidTerms = sale.paidAmount != null ? sale.paidAmount.toString() : '';
+  final pendingTerms =
+    sale.pendingAmount != null ? sale.pendingAmount.toString() : '';
 
   final dateTerms = [
     '$day/$month/$year',
@@ -126,9 +147,116 @@ String _buildSaleSearchIndex(Sale sale) {
     reference,
     customerName,
     ledgerTerms,
+    paidTerms,
+    pendingTerms,
     productTerms,
     dateTerms,
   ].join(' ').toLowerCase();
+}
+
+String _ledgerEntryTypeLabel(String type) {
+  switch (type) {
+    case 'manual_charge':
+      return 'Cargo manual';
+    case 'product_charge':
+      return 'Cargo por productos';
+    case 'payment':
+      return 'Abono';
+    case 'settlement':
+      return 'Liquidación';
+    default:
+      return type;
+  }
+}
+
+String _buildDebtCycleSearchIndex(
+  CustomerDebtCycle cycle,
+  List<CustomerLedgerEntry> entries,
+) {
+  final opened = cycle.openedAt;
+  final closed = cycle.closedAt ?? cycle.openedAt;
+
+  final productTerms = entries.expand((entry) {
+    return entry.items.map((item) {
+      return [
+        item.productName,
+        item.internalCode,
+        item.barcode ?? '',
+      ].join(' ');
+    });
+  }).join(' ');
+
+  final paymentTerms = entries.expand((entry) {
+    return entry.paymentSplits.map((split) {
+      return [
+        _paymentMethodLabel(split.method),
+        split.reference ?? '',
+        split.amount.toString(),
+      ].join(' ');
+    });
+  }).join(' ');
+
+  final entryTerms = entries.map((entry) {
+    return [
+      _ledgerEntryTypeLabel(entry.type),
+      entry.description,
+      entry.amount.toString(),
+      entry.balanceAfter.toString(),
+    ].join(' ');
+  }).join(' ');
+
+  final dateTerms = [
+    '${opened.day}/${opened.month}/${opened.year}',
+    '${closed.day}/${closed.month}/${closed.year}',
+    _monthName(opened.month),
+    _monthName(closed.month),
+    opened.year.toString(),
+    closed.year.toString(),
+  ].join(' ');
+
+  return [
+    cycle.id,
+    cycle.customerId,
+    cycle.customerNameSnapshot,
+    'libreta adeudo liquidado liquidación ciclo cerrado',
+    cycle.totalCharged.toString(),
+    cycle.totalPaid.toString(),
+    cycle.finalBalance.toString(),
+    productTerms,
+    paymentTerms,
+    entryTerms,
+    dateTerms,
+  ].join(' ').toLowerCase();
+}
+
+class _HistoryRecord {
+  final String id;
+  final DateTime createdAt;
+  final Sale? sale;
+  final CustomerDebtCycle? debtCycle;
+  final List<CustomerLedgerEntry> debtCycleEntries;
+
+  const _HistoryRecord({
+    required this.id,
+    required this.createdAt,
+    this.sale,
+    this.debtCycle,
+    this.debtCycleEntries = const [],
+  });
+
+  bool get isNormalSale => sale != null;
+  bool get isDebtCycle => debtCycle != null;
+
+  double get totalAmount {
+    if (sale != null) return sale!.total;
+    if (debtCycle != null) return debtCycle!.totalCharged;
+    return 0;
+  }
+
+  String get searchIndex {
+    if (sale != null) return _buildSaleSearchIndex(sale!);
+    return _buildDebtCycleSearchIndex(debtCycle!, debtCycleEntries);
+  }
 }
 
 class SalesHistoryPage extends StatefulWidget {
@@ -140,9 +268,10 @@ class SalesHistoryPage extends StatefulWidget {
 
 class _SalesHistoryPageState extends State<SalesHistoryPage> {
   final SalesRepositoryImpl _salesRepository = SalesRepositoryImpl();
+  final CustomerRepositoryImpl _customerRepository = CustomerRepositoryImpl();
   final TextEditingController _searchController = TextEditingController();
 
-  late Future<List<Sale>> _salesFuture;
+  late Future<List<_HistoryRecord>> _historyFuture;
   String _searchQuery = '';
 
   String? _expandedSectionKey;
@@ -152,7 +281,7 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
   @override
   void initState() {
     super.initState();
-    _salesFuture = _loadSales();
+    _historyFuture = _loadHistory();
 
     _searchController.addListener(() {
       setState(() {
@@ -167,20 +296,68 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
     super.dispose();
   }
 
-  Future<List<Sale>> _loadSales() async {
-    final result = await _salesRepository.getSales();
-    return result.fold(
+Future<List<_HistoryRecord>> _loadHistory() async {
+  final salesResult = await _salesRepository.getSales();
+
+  final allSales = salesResult.fold<List<Sale>>(
+    (failure) => throw Exception(failure.message),
+    (sales) => sales,
+  );
+
+  final normalSales = allSales
+      .where((sale) => !sale.isCustomerLedger)
+      .toList()
+    ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+  // Si tu método global se llama distinto, cambia solo esta línea.
+  final closedCyclesResult = await _customerRepository.getAllClosedDebtCycles();
+
+  final closedCycles = closedCyclesResult.fold<List<CustomerDebtCycle>>(
+    (failure) => throw Exception(failure.message),
+    (cycles) => cycles.where((cycle) => cycle.isClosed).toList(),
+  )..sort(
+      (a, b) =>
+          (b.closedAt ?? b.openedAt).compareTo(a.closedAt ?? a.openedAt),
+    );
+
+  final records = <_HistoryRecord>[
+    ...normalSales.map(
+      (sale) => _HistoryRecord(
+        id: 'sale-${sale.id}',
+        createdAt: sale.createdAt,
+        sale: sale,
+      ),
+    ),
+  ];
+
+  for (final cycle in closedCycles) {
+    final entriesResult = await _customerRepository.getDebtCycleEntries(cycle.id);
+
+    final entries = entriesResult.fold<List<CustomerLedgerEntry>>(
       (failure) => throw Exception(failure.message),
-      (sales) => sales,
+      (entries) => entries..sort((a, b) => b.createdAt.compareTo(a.createdAt)),
+    );
+
+    records.add(
+      _HistoryRecord(
+        id: 'cycle-${cycle.id}',
+        createdAt: cycle.closedAt ?? cycle.openedAt,
+        debtCycle: cycle,
+        debtCycleEntries: entries,
+      ),
     );
   }
 
-  Future<void> _refreshSales() async {
-    setState(() {
-      _salesFuture = _loadSales();
-    });
-    await _salesFuture;
-  }
+  records.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  return records;
+}
+
+Future<void> _refreshHistory() async {
+  setState(() {
+    _historyFuture = _loadHistory();
+  });
+  await _historyFuture;
+}
 
 void _toggleSection(String key, String? effectiveExpandedKey) {
   setState(() {
@@ -190,370 +367,390 @@ void _toggleSection(String key, String? effectiveExpandedKey) {
   });
 }
 
-  void _clearSearch() {
-    _searchController.clear();
-  }
+void _clearSearch() {
+  _searchController.clear();
+}
 
-  bool _saleMatchesSearch(Sale sale, String query) {
-    if (query.isEmpty) return true;
-    return _buildSaleSearchIndex(sale).contains(query);
-  }
+bool _recordMatchesSearch(_HistoryRecord record, String query) {
+  if (query.isEmpty) return true;
+  return record.searchIndex.contains(query);
+}
 
-  List<_SalesSection> _buildSections(List<Sale> sales) {
-    final now = DateTime.now();
-    final Map<String, _SalesSection> sections = {};
+List<_SalesSection> _buildSections(List<_HistoryRecord> records) {
+  final now = DateTime.now();
+  final Map<String, _SalesSection> sections = {};
 
-    final sortedSales = [...sales]
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  final sortedRecords = [...records]
+    ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-    for (final sale in sortedSales) {
-      final saleDate = sale.createdAt;
-      final saleDay = DateTime(saleDate.year, saleDate.month, saleDate.day);
-      final nowDay = DateTime(now.year, now.month, now.day);
-      final diffDays = nowDay.difference(saleDay).inDays;
+  for (final record in sortedRecords) {
+    final itemDate = record.createdAt;
+    final itemDay = DateTime(itemDate.year, itemDate.month, itemDate.day);
+    final nowDay = DateTime(now.year, now.month, now.day);
+    final diffDays = nowDay.difference(itemDay).inDays;
 
-      late final String key;
-      late final String title;
-      late final DateTime sortDate;
-      late final bool isToday;
+    late final String key;
+    late final String title;
+    late final DateTime sortDate;
+    late final bool isToday;
 
-      if (diffDays < 31) {
-        key = 'day-${saleDate.year}-${_two(saleDate.month)}-${_two(saleDate.day)}';
-        title = _buildDayTitle(saleDate, now);
-        sortDate = DateTime(saleDate.year, saleDate.month, saleDate.day);
-        isToday = diffDays == 0;
-      } else if (diffDays < 366) {
-        key = 'month-${saleDate.year}-${_two(saleDate.month)}';
-        title = '${_monthName(saleDate.month)} ${saleDate.year}';
-        sortDate = DateTime(saleDate.year, saleDate.month, 1);
-        isToday = false;
-      } else {
-        key = 'year-${saleDate.year}';
-        title = '${saleDate.year}';
-        sortDate = DateTime(saleDate.year, 1, 1);
-        isToday = false;
-      }
-
-      sections.putIfAbsent(
-        key,
-        () => _SalesSection(
-          key: key,
-          title: title,
-          sales: [],
-          sortDate: sortDate,
-          isToday: isToday,
-        ),
-      );
-
-      sections[key]!.sales.add(sale);
+    if (diffDays < 31) {
+      key = 'day-${itemDate.year}-${_two(itemDate.month)}-${_two(itemDate.day)}';
+      title = _buildDayTitle(itemDate, now);
+      sortDate = DateTime(itemDate.year, itemDate.month, itemDate.day);
+      isToday = diffDays == 0;
+    } else if (diffDays < 366) {
+      key = 'month-${itemDate.year}-${_two(itemDate.month)}';
+      title = '${_monthName(itemDate.month)} ${itemDate.year}';
+      sortDate = DateTime(itemDate.year, itemDate.month, 1);
+      isToday = false;
+    } else {
+      key = 'year-${itemDate.year}';
+      title = '${itemDate.year}';
+      sortDate = DateTime(itemDate.year, 1, 1);
+      isToday = false;
     }
 
-    final result = sections.values.toList()
-      ..sort((a, b) => b.sortDate.compareTo(a.sortDate));
+    sections.putIfAbsent(
+      key,
+      () => _SalesSection(
+        key: key,
+        title: title,
+        records: [],
+        sortDate: sortDate,
+        isToday: isToday,
+      ),
+    );
 
-    for (final section in result) {
-      section.sales.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    }
-
-    return result;
+    sections[key]!.records.add(record);
   }
 
-  String? _effectiveExpandedKey(List<_SalesSection> sections) {
-    if (sections.isEmpty) return null;
+  final result = sections.values.toList()
+    ..sort((a, b) => b.sortDate.compareTo(a.sortDate));
 
-    if (_didInteractWithSections) {
-      if (_expandedSectionKey == null) return null;
-
-      final exists = sections.any((section) => section.key == _expandedSectionKey);
-      return exists ? _expandedSectionKey : sections.first.key;
-    }
-
-    for (final section in sections) {
-      if (section.isToday) return section.key;
-    }
-
-    return sections.first.key;
+  for (final section in result) {
+    section.records.sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
-  void _openSaleDetail(Sale sale) {
+  return result;
+}
+
+String? _effectiveExpandedKey(List<_SalesSection> sections) {
+  if (sections.isEmpty) return null;
+
+  if (_didInteractWithSections) {
+    if (_expandedSectionKey == null) return null;
+
+    final exists = sections.any((section) => section.key == _expandedSectionKey);
+    return exists ? _expandedSectionKey : sections.first.key;
+  }
+
+  for (final section in sections) {
+    if (section.isToday) return section.key;
+  }
+
+  return sections.first.key;
+}
+
+void _openHistoryDetail(_HistoryRecord record) {
+  if (record.isNormalSale) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => SaleDetailPage(sale: sale),
+        builder: (_) => SaleDetailPage(sale: record.sale!),
       ),
     );
+    return;
   }
+
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) => DebtCycleHistoryDetailPage(
+        cycle: record.debtCycle!,
+        entries: record.debtCycleEntries,
+      ),
+    ),
+  );
+}
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Historial de ventas'),
+        title: const Text('Historial general'),
         centerTitle: true,
       ),
       body: RefreshIndicator(
-        onRefresh: _refreshSales,
-        child: FutureBuilder<List<Sale>>(
-          future: _salesFuture,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: const [
-                  SizedBox(height: 180),
-                  Center(child: CircularProgressIndicator()),
-                ],
-              );
-            }
+  onRefresh: _refreshHistory,
+  child: FutureBuilder<List<_HistoryRecord>>(
+    future: _historyFuture,
+    builder: (context, snapshot) {
+      if (snapshot.connectionState == ConnectionState.waiting) {
+        return ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: const [
+            SizedBox(height: 180),
+            Center(child: CircularProgressIndicator()),
+          ],
+        );
+      }
 
-            if (snapshot.hasError) {
-              return ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(24),
-                children: [
-                  const SizedBox(height: 100),
-                  const Icon(
-                    Icons.error_outline,
-                    size: 52,
-                    color: Colors.redAccent,
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'No se pudo cargar el historial',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${snapshot.error}',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.grey[700],
-                    ),
-                  ),
-                ],
-              );
-            }
-
-            final sales = snapshot.data ?? [];
-            final filteredSales = sales
-                .where((sale) => _saleMatchesSearch(sale, _searchQuery))
-                .toList()
-              ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-
-            final sections = _buildSections(filteredSales);
-            final expandedKey = _effectiveExpandedKey(sections);
-
-            final totalFilteredAmount = filteredSales.fold<double>(
-              0,
-              (sum, sale) => sum + sale.total,
-            );
-
-            if (sales.isEmpty) {
-              return CustomScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                slivers: [
-                  SliverToBoxAdapter(child: _buildTopArea(filteredSales, totalFilteredAmount)),
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: _buildEmptyState(
-                      icon: Icons.receipt_long_outlined,
-                      title: 'Aún no hay ventas guardadas.',
-                      subtitle: 'Cuando confirmes ventas, aparecerán aquí.',
-                    ),
-                  ),
-                ],
-              );
-            }
-
-            if (filteredSales.isEmpty) {
-              return CustomScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                slivers: [
-                  SliverToBoxAdapter(child: _buildTopArea(filteredSales, totalFilteredAmount)),
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: _buildEmptyState(
-                      icon: Icons.search_off_outlined,
-                      title: 'No se encontraron resultados.',
-                      subtitle:
-                          'Puedes buscar por fecha, folio, método de pago, referencia, nombre, clave o código.',
-                    ),
-                  ),
-                ],
-              );
-            }
-
-            return CustomScrollView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              slivers: [
-                SliverToBoxAdapter(
-                  child: _buildTopArea(filteredSales, totalFilteredAmount),
-                ),
-...sections.expand((section) {
-  final sectionTotal = section.sales.fold<double>(
-    0,
-    (sum, sale) => sum + sale.total,
-  );
-
-  final isExpanded = expandedKey == section.key;
-
-  return <Widget>[
-    if (isExpanded)
-      SliverPersistentHeader(
-        pinned: true,
-        delegate: _SectionHeaderDelegate(
-          height: 92,
-          child: Container(
-            color: const Color(0xFFF7F7F8),
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: _buildSectionGroupHeader(
-              section: section,
-              total: sectionTotal,
-              isExpanded: true,
-              onTap: () => _toggleSection(section.key, expandedKey),
+      if (snapshot.hasError) {
+        return ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(24),
+          children: [
+            const SizedBox(height: 100),
+            const Icon(
+              Icons.error_outline,
+              size: 52,
+              color: Colors.redAccent,
             ),
+            const SizedBox(height: 16),
+            const Text(
+              'No se pudo cargar el historial',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '${snapshot.error}',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.grey[700],
+              ),
+            ),
+          ],
+        );
+      }
+
+      final records = snapshot.data ?? [];
+      final filteredRecords = records
+          .where((record) => _recordMatchesSearch(record, _searchQuery))
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      final sections = _buildSections(filteredRecords);
+      final expandedKey = _effectiveExpandedKey(sections);
+
+      final totalFilteredAmount = filteredRecords.fold<double>(
+        0,
+        (sum, record) => sum + record.totalAmount,
+      );
+
+      if (records.isEmpty) {
+        return CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(
+              child: _buildTopArea(filteredRecords, totalFilteredAmount),
+            ),
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _buildEmptyState(
+                icon: Icons.receipt_long_outlined,
+                title: 'Aún no hay registros guardados.',
+                subtitle: 'Cuando confirmes ventas o cierres adeudos, aparecerán aquí.',
+              ),
+            ),
+          ],
+        );
+      }
+
+      if (filteredRecords.isEmpty) {
+        return CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(
+              child: _buildTopArea(filteredRecords, totalFilteredAmount),
+            ),
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _buildEmptyState(
+                icon: Icons.search_off_outlined,
+                title: 'No se encontraron resultados.',
+                subtitle:
+                    'Puedes buscar por fecha, folio, cliente, libreta, producto, clave o método.',
+              ),
+            ),
+          ],
+        );
+      }
+
+      return CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(
+            child: _buildTopArea(filteredRecords, totalFilteredAmount),
           ),
-        ),
-      )
-    else
-      SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: _buildSectionGroupHeader(
-            section: section,
-            total: sectionTotal,
-            isExpanded: false,
-            onTap: () => _toggleSection(section.key, expandedKey),
-          ),
-        ),
-      ),
-    SliverToBoxAdapter(
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          16,
-          isExpanded ? 4 : 0,
-          16,
-          isExpanded ? 20 : 0,
-        ),
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 600),
-          switchInCurve: Curves.easeOutCubic,
-          switchOutCurve: Curves.easeInCubic,
-          transitionBuilder: (child, animation) {
-            final curved = CurvedAnimation(
-              parent: animation,
-              curve: Curves.easeInOutCubic,
+          ...sections.expand((section) {
+            final sectionTotal = section.records.fold<double>(
+              0,
+              (sum, record) => sum + record.totalAmount,
             );
 
-            return ClipRect(
-              child: FadeTransition(
-                opacity: curved,
-                child: SizeTransition(
-                  sizeFactor: curved,
-                  axisAlignment: -1.0,
-                  child: SlideTransition(
-                    position: Tween<Offset>(
-                      begin: const Offset(0, -0.15),
-                      end: Offset.zero,
-                    ).animate(curved),
-                    child: child,
+            final isExpanded = expandedKey == section.key;
+
+            return <Widget>[
+              if (isExpanded)
+                SliverPersistentHeader(
+                  pinned: true,
+                  delegate: _SectionHeaderDelegate(
+                    height: 92,
+                    child: Container(
+                      color: const Color(0xFFF7F7F8),
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: _buildSectionGroupHeader(
+                        section: section,
+                        total: sectionTotal,
+                        isExpanded: true,
+                        onTap: () => _toggleSection(section.key, expandedKey),
+                      ),
+                    ),
+                  ),
+                )
+              else
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: _buildSectionGroupHeader(
+                      section: section,
+                      total: sectionTotal,
+                      isExpanded: false,
+                      onTap: () => _toggleSection(section.key, expandedKey),
+                    ),
+                  ),
+                ),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    isExpanded ? 4 : 0,
+                    16,
+                    isExpanded ? 20 : 0,
+                  ),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 600),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) {
+                      final curved = CurvedAnimation(
+                        parent: animation,
+                        curve: Curves.easeInOutCubic,
+                      );
+
+                      return ClipRect(
+                        child: FadeTransition(
+                          opacity: curved,
+                          child: SizeTransition(
+                            sizeFactor: curved,
+                            axisAlignment: -1.0,
+                            child: SlideTransition(
+                              position: Tween<Offset>(
+                                begin: const Offset(0, -0.15),
+                                end: Offset.zero,
+                              ).animate(curved),
+                              child: child,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                    child: isExpanded
+                        ? Column(
+                            key: ValueKey('section-open-${section.key}'),
+                            children: [
+                              for (final record in section.records)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: _buildHistoryCard(record),
+                                ),
+                            ],
+                          )
+                        : const SizedBox(
+                            key: ValueKey('section-closed'),
+                          ),
                   ),
                 ),
               ),
-            );
-          },
-          child: isExpanded
-              ? Column(
-                  key: ValueKey('section-open-${section.key}'),
-                  children: [
-                    for (final sale in section.sales)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _buildSaleCard(sale),
-                      ),
-                  ],
-                )
-              : const SizedBox(
-                  key: ValueKey('section-closed'),
-                ),
+            ];
+          }),
+          const SliverToBoxAdapter(
+            child: SizedBox(height: 24),
+          ),
+        ],
+      );
+    },
+  ),
+),
+    );
+  }
+
+  Widget _buildTopArea(
+  List<_HistoryRecord> filteredRecords,
+  double totalFilteredAmount,
+) {
+  return Padding(
+    padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+    child: Column(
+      children: [
+        _buildSearchCard(),
+        const SizedBox(height: 14),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            _HistorySummaryCard(
+              label: 'Registros visibles',
+              value: '${filteredRecords.length}',
+            ),
+            _HistorySummaryCard(
+              label: 'Monto visible',
+              value: _formatCurrency(totalFilteredAmount),
+              highlight: true,
+            ),
+          ],
         ),
+      ],
+    ),
+  );
+}
+
+Widget _buildSearchCard() {
+  return Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: const Color(0xFFE5E5EA)),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.04),
+          blurRadius: 10,
+          offset: const Offset(0, 4),
+        ),
+      ],
+    ),
+    child: TextField(
+      controller: _searchController,
+      decoration: InputDecoration(
+        hintText: 'Buscar por fecha, cliente, libreta, producto, folio o método',
+        prefixIcon: const Icon(Icons.search),
+        suffixIcon: _searchController.text.isEmpty
+            ? null
+            : IconButton(
+                onPressed: _clearSearch,
+                icon: const Icon(Icons.close),
+                tooltip: 'Limpiar búsqueda',
+              ),
       ),
     ),
-  ];
-}),
-                const SliverToBoxAdapter(
-                  child: SizedBox(height: 24),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopArea(List<Sale> filteredSales, double totalFilteredAmount) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-      child: Column(
-        children: [
-          _buildSearchCard(),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              _HistorySummaryCard(
-                label: 'Ventas visibles',
-                value: '${filteredSales.length}',
-              ),
-              _HistorySummaryCard(
-                label: 'Monto visible',
-                value: _formatCurrency(totalFilteredAmount),
-                highlight: true,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSearchCard() {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE5E5EA)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: TextField(
-        controller: _searchController,
-        decoration: InputDecoration(
-          hintText: 'Buscar por fecha, folio, cliente, producto, clave o método',
-          prefixIcon: const Icon(Icons.search),
-          suffixIcon: _searchController.text.isEmpty
-              ? null
-              : IconButton(
-                  onPressed: _clearSearch,
-                  icon: const Icon(Icons.close),
-                  tooltip: 'Limpiar búsqueda',
-                ),
-        ),
-      ),
-    );
-  }
+  );
+}
 
 Widget _buildSectionGroupHeader({
   required _SalesSection section,
@@ -609,7 +806,7 @@ Widget _buildSectionGroupHeader({
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                '${section.sales.length} venta${section.sales.length == 1 ? '' : 's'}',
+                '${section.records.length} registro${section.records.length == 1 ? '' : 's'}',
                 style: const TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
@@ -632,195 +829,437 @@ Widget _buildSectionGroupHeader({
   );
 }
 
-  Widget _buildSaleCard(Sale sale) {
-    final itemsCount = sale.items.fold<int>(
-      0,
-      (sum, item) => sum + item.quantity,
-    );
-
-    return InkWell(
-      onTap: () => _openSaleDetail(sale),
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFE5E5EA)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    _buildSaleFolio(sale),
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _paymentMethodColor(sale.paymentMethod)
-                        .withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    _paymentMethodLabel(sale.paymentMethod),
-                    style: TextStyle(
-                      color: _paymentMethodColor(sale.paymentMethod),
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-Text(
-  _formatDate(sale.createdAt),
-  style: TextStyle(
-    color: Colors.grey[600],
-    fontSize: 13,
-  ),
-),
-if (sale.customerName != null && sale.customerName!.trim().isNotEmpty) ...[
-  const SizedBox(height: 8),
-  Text(
-    'Cliente: ${sale.customerName!}',
-    style: TextStyle(
-      fontSize: 13,
-      fontWeight: FontWeight.w700,
-      color: Colors.grey[800],
-    ),
-  ),
-],
-if (sale.isCustomerLedger) ...[
-  const SizedBox(height: 6),
-  Text(
-    'Venta enviada a libreta',
-    style: TextStyle(
-      fontSize: 12,
-      color: Colors.orange[800],
-      fontWeight: FontWeight.w600,
-    ),
-  ),
-],
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: [
-                _HistoryInfoChip(
-                  label: 'Artículos',
-                  value: '$itemsCount',
-                ),
-                _HistoryInfoChip(
-                  label: 'Total',
-                  value: _formatCurrency(sale.total),
-                  highlight: true,
-                ),
-              ],
-            ),
-            if (sale.transferReference != null &&
-                sale.transferReference!.trim().isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text(
-                'Referencia: ${sale.transferReference!}',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[700],
-                ),
-              ),
-            ],
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    sale.items.take(2).map((e) => e.productName).join(', '),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.grey[700],
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                const Icon(
-                  Icons.chevron_right,
-                  color: Colors.grey,
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
+Widget _buildHistoryCard(_HistoryRecord record) {
+  if (record.isNormalSale) {
+    return _buildNormalSaleCard(record.sale!);
   }
 
-  Widget _buildEmptyState({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 60),
-      child: Column(
-        children: [
-          Icon(
-            icon,
-            size: 56,
-            color: Colors.grey,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            subtitle,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.grey[700],
-              height: 1.4,
-            ),
+  return _buildDebtCycleCard(record);
+}
+
+Widget _buildNormalSaleCard(Sale sale) {
+  final itemsCount = sale.items.fold<int>(
+    0,
+    (sum, item) => sum + item.quantity,
+  );
+
+  return InkWell(
+    onTap: () => _openHistoryDetail(
+      _HistoryRecord(
+        id: 'sale-${sale.id}',
+        createdAt: sale.createdAt,
+        sale: sale,
+      ),
+    ),
+    borderRadius: BorderRadius.circular(16),
+    child: Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE5E5EA)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  _buildSaleFolio(sale),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: _paymentMethodColor(sale.paymentMethod)
+                      .withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  _paymentMethodLabel(sale.paymentMethod),
+                  style: TextStyle(
+                    color: _paymentMethodColor(sale.paymentMethod),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            _formatDate(sale.createdAt),
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: 13,
+            ),
+          ),
+          if (sale.customerName != null && sale.customerName!.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Cliente: ${sale.customerName!}',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: Colors.grey[800],
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              _HistoryInfoChip(
+                label: 'Artículos',
+                value: '$itemsCount',
+              ),
+              _HistoryInfoChip(
+                label: 'Total',
+                value: _formatCurrency(sale.total),
+                highlight: true,
+              ),
+            ],
+          ),
+          if (sale.transferReference != null &&
+              sale.transferReference!.trim().isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Referencia: ${sale.transferReference!}',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[700],
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  sale.items.take(2).map((e) => e.productName).join(', '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.grey[700],
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Icon(
+                Icons.chevron_right,
+                color: Colors.grey,
+              ),
+            ], 
+          ),
+        ],
+      ), 
+    ),
+  );
+}  
+
+Widget _buildDebtCycleCard(_HistoryRecord record) { 
+  final cycle = record.debtCycle!;
+  final entries = record.debtCycleEntries; 
+
+  final totalItems = entries.fold<int>( 
+    0, 
+    (sum, entry) => sum + entry.items.fold<int>(
+      0,
+      (itemsSum, item) => itemsSum + item.quantity,
+    ),
+  );
+
+  final productNames = <String>{
+    for (final entry in entries) ...entry.items.map((item) => item.productName),
+  }.toList();
+
+  final previewProducts = productNames.take(3).join(', ');
+  final remainingProducts = productNames.length - 3;
+
+  final subtitleProducts = previewProducts.isEmpty
+      ? 'Sin productos visibles'
+      : remainingProducts > 0
+          ? '$previewProducts +$remainingProducts más'
+          : previewProducts;
+
+  final paymentEntries = entries
+      .where((entry) => entry.type == 'payment' || entry.type == 'settlement')
+      .toList();
+
+  final paymentSplits = paymentEntries
+      .expand((entry) => entry.paymentSplits)
+      .toList();
+
+  final totalPaidBySplits = paymentSplits.fold<double>(
+    0,
+    (sum, split) => sum + split.amount,
+  );
+
+  final paymentsCount = paymentEntries.length;
+
+  final methodTotals = <String, double>{};
+  for (final split in paymentSplits) {
+    methodTotals.update(
+      split.method,
+      (value) => value + split.amount,
+      ifAbsent: () => split.amount,
     );
   }
+
+  final methodSummary = methodTotals.entries.map((entry) {
+    return '${_paymentMethodLabel(entry.key)}: ${_formatCurrency(entry.value)}';
+  }).join(' · ');
+
+  final partialSalesCount = entries.where((entry) {
+    return entry.type == 'product_charge' &&
+        entry.description.toLowerCase().contains('parcial');
+  }).length;
+
+  return InkWell(
+    onTap: () => _openHistoryDetail(record),
+    borderRadius: BorderRadius.circular(16),
+    child: Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE5E5EA)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Text(
+                  'Adeudo liquidado',
+                  style: TextStyle(
+                    color: Colors.orange,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.green.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Text(
+                  'Liquidado',
+                  style: TextStyle(
+                    color: Colors.green,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              if (partialSalesCount > 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '$partialSalesCount pago parcial',
+                    style: const TextStyle(
+                      color: Colors.blue,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            cycle.customerNameSnapshot,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Inicio: ${_formatDate(cycle.openedAt)}',
+            style: TextStyle(
+              color: Colors.grey[700],
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Cierre: ${_formatDate(cycle.closedAt ?? cycle.openedAt)}',
+            style: TextStyle(
+              color: Colors.grey[700],
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              _HistoryInfoChip(
+                label: 'Total adeudado',
+                value: _formatCurrency(cycle.totalCharged),
+                highlight: true,
+              ),
+              _HistoryInfoChip(
+                label: 'Total abonado',
+                value: _formatCurrency(cycle.totalPaid),
+              ),
+              _HistoryInfoChip(
+                label: 'Pagos',
+                value: '$paymentsCount',
+              ),
+              _HistoryInfoChip(
+                label: 'Artículos',
+                value: '$totalItems',
+              ),
+            ],
+          ),
+          if (paymentSplits.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Cobrado: ${_formatCurrency(totalPaidBySplits)}',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: Colors.grey[800],
+              ),
+            ),
+            if (methodSummary.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                methodSummary,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.grey[700],
+                  fontSize: 12,
+                  height: 1.4,
+                ),
+              ),
+            ],
+          ],
+          const SizedBox(height: 12),
+          Text(
+            subtitleProducts,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: Colors.grey[700],
+              fontSize: 13,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Row(
+            children: [
+              Spacer(),
+              Icon(
+                Icons.chevron_right,
+                color: Colors.grey,
+              ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _buildEmptyState({
+  required IconData icon,
+  required String title,
+  required String subtitle,
+}) {
+  return Padding(
+    padding: const EdgeInsets.only(top: 60),
+    child: Column(
+      children: [
+        Icon(
+          icon,
+          size: 56,
+          color: Colors.grey,
+        ),
+        const SizedBox(height: 16),
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          subtitle,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Colors.grey[700],
+            height: 1.4,
+          ),
+        ),
+      ],
+    ),
+  );
+}
 }
 
 class SaleDetailPage extends StatelessWidget {
@@ -887,17 +1326,25 @@ class SaleDetailPage extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 14),
-Text('Fecha: ${_formatDate(sale.createdAt)}'),
-if (sale.customerName != null && sale.customerName!.trim().isNotEmpty) ...[
-  const SizedBox(height: 4),
-  Text('Cliente: ${sale.customerName!}'),
-],
-const SizedBox(height: 4),
-Text('Método de pago: ${_paymentMethodLabel(sale.paymentMethod)}'),
-if (sale.isCustomerLedger) ...[
-  const SizedBox(height: 4),
-  const Text('Tipo: Venta enviada a libreta'),
-],
+                Text('Fecha: ${_formatDate(sale.createdAt)}'),
+                if (sale.customerName != null && sale.customerName!.trim().isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text('Cliente: ${sale.customerName!}'),
+                ],
+                const SizedBox(height: 4),
+                Text('Método de pago: ${_paymentMethodLabel(sale.paymentMethod)}'),
+                if (sale.isCustomerLedger) ...[
+                  const SizedBox(height: 4),
+                  Text('Tipo: ${_ledgerTypeLabel(sale)}'),
+                ],
+                if (sale.isPartialCustomerLedger && sale.paidAmount != null) ...[
+                  const SizedBox(height: 4),
+                 Text('Pagó ahora: ${_formatCurrency(sale.paidAmount!)}'),
+                ],
+                if (sale.isPartialCustomerLedger && sale.pendingAmount != null) ...[
+                  const SizedBox(height: 4),
+                  Text('Quedó pendiente: ${_formatCurrency(sale.pendingAmount!)}'),
+                ],
                 if (sale.amountReceived != null) ...[
                   const SizedBox(height: 4),
                   Text('Monto recibido: ${_formatCurrency(sale.amountReceived!)}'),
@@ -1014,6 +1461,254 @@ if (sale.isCustomerLedger) ...[
   }
 }
 
+class DebtCycleHistoryDetailPage extends StatelessWidget {
+  final CustomerDebtCycle cycle;
+  final List<CustomerLedgerEntry> entries;
+
+  const DebtCycleHistoryDetailPage({
+    super.key,
+    required this.cycle,
+    required this.entries,
+  });
+
+  String _buildItemsSummary(CustomerLedgerEntry entry) {
+    if (entry.items.isEmpty) return '';
+
+    final names = entry.items.map((item) => item.productName).toList();
+    final visible = names.take(3).join(', ');
+    final remaining = names.length - 3;
+
+    if (remaining > 0) {
+      return '$visible +$remaining más';
+    }
+
+    return visible;
+  }
+
+  bool _isChargeType(String type) {
+    return type == 'manual_charge' || type == 'product_charge';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final totalItems = entries.fold<int>(
+      0,
+      (sum, entry) => sum + entry.items.fold<int>(
+        0,
+        (itemsSum, item) => itemsSum + item.quantity,
+      ),
+    );
+
+    final sortedEntries = [...entries]
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Detalle de adeudo'),
+        centerTitle: true,
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFE5E5EA)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.04),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  cycle.customerNameSnapshot,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    _HistoryInfoChip(
+                      label: 'Inicio',
+                      value: _formatDate(cycle.openedAt),
+                    ),
+                    _HistoryInfoChip(
+                      label: 'Cierre',
+                      value: _formatDate(cycle.closedAt ?? cycle.openedAt),
+                    ),
+                    _HistoryInfoChip(
+                      label: 'Adeudado',
+                      value: _formatCurrency(cycle.totalCharged),
+                      highlight: true,
+                    ),
+                    _HistoryInfoChip(
+                      label: 'Abonado',
+                      value: _formatCurrency(cycle.totalPaid),
+                    ),
+                    _HistoryInfoChip(
+                      label: 'Saldo final',
+                      value: _formatCurrency(cycle.finalBalance),
+                    ),
+                    _HistoryInfoChip(
+                      label: 'Artículos',
+                      value: '$totalItems',
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Movimientos del adeudo',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 12),
+          ...sortedEntries.map(
+            (entry) => Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE5E5EA)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _paymentMethodColor(
+                            entry.type == 'payment' || entry.type == 'settlement'
+                                ? 'transfer'
+                                : 'customer_ledger',
+                          ).withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          _ledgerEntryTypeLabel(entry.type),
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12,
+                            color: entry.type == 'payment' || entry.type == 'settlement'
+                                ? Colors.blue
+                                : Colors.orange,
+                          ),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          _formatDate(entry.createdAt),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (entry.description.trim().isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      entry.description,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      _HistoryInfoChip(
+                        label: 'Movimiento',
+                        value:
+                            '${_isChargeType(entry.type) ? '+' : '-'} ${_formatCurrency(entry.amount)}',
+                        highlight: _isChargeType(entry.type),
+                      ),
+                      _HistoryInfoChip(
+                        label: 'Saldo después',
+                        value: _formatCurrency(entry.balanceAfter),
+                      ),
+                    ],
+                  ),
+                  if (entry.items.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      _buildItemsSummary(entry),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[700],
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                  if (entry.paymentSplits.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    ...entry.paymentSplits.map(
+                      (split) => Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text(
+                          split.reference != null && split.reference!.trim().isNotEmpty
+                              ? '${_paymentMethodLabel(split.method)}: ${_formatCurrency(split.amount)} · Ref: ${split.reference!}'
+                              : '${_paymentMethodLabel(split.method)}: ${_formatCurrency(split.amount)}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class SaleTicketPreviewPage extends StatelessWidget {
   final Sale sale;
 
@@ -1110,23 +1805,37 @@ class SaleTicketPreviewPage extends StatelessWidget {
                         const SizedBox(height: 8),
                         _TicketRow(label: 'Folio', value: _buildSaleFolio(sale)),
                         const SizedBox(height: 4),
-_TicketRow(label: 'Fecha', value: _formatDate(sale.createdAt)),
-if (sale.customerName != null && sale.customerName!.trim().isNotEmpty) ...[
-  const SizedBox(height: 4),
-  _TicketRow(label: 'Cliente', value: sale.customerName!),
-],
-const SizedBox(height: 4),
-_TicketRow(
-  label: 'Pago',
-  value: _paymentMethodLabel(sale.paymentMethod),
-),
-if (sale.isCustomerLedger) ...[
-  const SizedBox(height: 4),
-  const _TicketRow(
-    label: 'Tipo',
-    value: 'Venta enviada a libreta',
-  ),
-],
+                        _TicketRow(label: 'Fecha', value: _formatDate(sale.createdAt)),
+                        if (sale.customerName != null && sale.customerName!.trim().isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          _TicketRow(label: 'Cliente', value: sale.customerName!),
+                        ],
+                        const SizedBox(height: 4),
+                        _TicketRow(
+                          label: 'Pago',
+                          value: _paymentMethodLabel(sale.paymentMethod),
+                        ),
+                        if (sale.isCustomerLedger) ...[
+                          const SizedBox(height: 4),
+                          _TicketRow(
+                            label: 'Tipo',
+                            value: _ledgerTypeLabel(sale),
+                          ),
+                        ],
+                        if (sale.isPartialCustomerLedger && sale.paidAmount != null) ...[
+                          const SizedBox(height: 4),
+                          _TicketRow(
+                            label: 'Pagó ahora',
+                            value: _formatCurrency(sale.paidAmount!),
+                          ),
+                        ],
+                        if (sale.isPartialCustomerLedger && sale.pendingAmount != null) ...[
+                          const SizedBox(height: 4),
+                          _TicketRow(
+                            label: 'Pendiente',
+                            value: _formatCurrency(sale.pendingAmount!),
+                          ),
+                        ],
                         if (sale.amountReceived != null) ...[
                           const SizedBox(height: 4),
                           _TicketRow(
@@ -1292,14 +2001,14 @@ class _TicketRow extends StatelessWidget {
 class _SalesSection {
   final String key;
   final String title;
-  final List<Sale> sales;
+  final List<_HistoryRecord> records;
   final DateTime sortDate;
   final bool isToday;
 
   _SalesSection({
     required this.key,
     required this.title,
-    required this.sales,
+    required this.records,
     required this.sortDate,
     required this.isToday,
   });

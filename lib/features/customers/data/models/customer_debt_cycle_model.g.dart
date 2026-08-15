@@ -1,39 +1,39 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
-part of 'customer_ledger_entry_model.dart';
+part of 'customer_debt_cycle_model.dart';
 
 // **************************************************************************
 // TypeAdapterGenerator
 // **************************************************************************
 
-class CustomerLedgerEntryModelAdapter
-    extends TypeAdapter<CustomerLedgerEntryModel> {
+class CustomerDebtCycleModelAdapter
+    extends TypeAdapter<CustomerDebtCycleModel> {
   @override
-  final int typeId = 23;
+  final int typeId = 24;
 
   @override
-  CustomerLedgerEntryModel read(BinaryReader reader) {
+  CustomerDebtCycleModel read(BinaryReader reader) {
     final numOfFields = reader.readByte();
     final fields = <int, dynamic>{
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
-    return CustomerLedgerEntryModel(
+    return CustomerDebtCycleModel(
       id: fields[0] as String,
       customerId: fields[1] as String,
-      type: fields[2] as String,
-      createdAt: fields[3] as DateTime,
-      description: fields[4] as String?,
-      amount: fields[5] as double,
-      balanceAfter: fields[6] as double,
-      relatedSaleId: fields[7] as String?,
-      items: (fields[8] as List).cast<CustomerLedgerItemModel>(),
-      paymentSplits: (fields[9] as List).cast<PaymentSplitModel>(),
-      debtCycleId: fields[10] as String,
+      customerNameSnapshot: fields[2] as String,
+      openedAt: fields[3] as DateTime,
+      closedAt: fields[4] as DateTime?,
+      isClosed: fields[5] as bool,
+      totalCharged: fields[6] as double,
+      totalPaid: fields[7] as double,
+      finalBalance: fields[8] as double,
+      totalItems: fields[9] as int,
+      movementCount: fields[10] as int,
     );
   }
 
   @override
-  void write(BinaryWriter writer, CustomerLedgerEntryModel obj) {
+  void write(BinaryWriter writer, CustomerDebtCycleModel obj) {
     writer
       ..writeByte(11)
       ..writeByte(0)
@@ -41,23 +41,23 @@ class CustomerLedgerEntryModelAdapter
       ..writeByte(1)
       ..write(obj.customerId)
       ..writeByte(2)
-      ..write(obj.type)
+      ..write(obj.customerNameSnapshot)
       ..writeByte(3)
-      ..write(obj.createdAt)
+      ..write(obj.openedAt)
       ..writeByte(4)
-      ..write(obj.description)
+      ..write(obj.closedAt)
       ..writeByte(5)
-      ..write(obj.amount)
+      ..write(obj.isClosed)
       ..writeByte(6)
-      ..write(obj.balanceAfter)
+      ..write(obj.totalCharged)
       ..writeByte(7)
-      ..write(obj.relatedSaleId)
+      ..write(obj.totalPaid)
       ..writeByte(8)
-      ..write(obj.items)
+      ..write(obj.finalBalance)
       ..writeByte(9)
-      ..write(obj.paymentSplits)
+      ..write(obj.totalItems)
       ..writeByte(10)
-      ..write(obj.debtCycleId);
+      ..write(obj.movementCount);
   }
 
   @override
@@ -66,7 +66,7 @@ class CustomerLedgerEntryModelAdapter
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is CustomerLedgerEntryModelAdapter &&
+      other is CustomerDebtCycleModelAdapter &&
           runtimeType == other.runtimeType &&
           typeId == other.typeId;
 }

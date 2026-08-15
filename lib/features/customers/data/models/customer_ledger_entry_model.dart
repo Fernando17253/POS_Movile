@@ -38,6 +38,9 @@ class CustomerLedgerEntryModel extends HiveObject {
   @HiveField(9)
   final List<PaymentSplitModel> paymentSplits;
 
+  @HiveField(10)
+  final String debtCycleId;
+
   CustomerLedgerEntryModel({
     required this.id,
     required this.customerId,
@@ -49,27 +52,30 @@ class CustomerLedgerEntryModel extends HiveObject {
     this.relatedSaleId,
     this.items = const [],
     this.paymentSplits = const [],
+    required this.debtCycleId,
   });
 
   CustomerLedgerEntry toEntity() {
-    return CustomerLedgerEntry(
-      id: id,
-      customerId: customerId,
-      type: type,
-      createdAt: createdAt,
-      description: description,
-      amount: amount,
-      balanceAfter: balanceAfter,
-      relatedSaleId: relatedSaleId,
-      items: items.map((e) => e.toEntity()).toList(),
-      paymentSplits: paymentSplits.map((e) => e.toEntity()).toList(),
-    );
-  }
+  return CustomerLedgerEntry(
+    id: id,
+    customerId: customerId,
+    debtCycleId: debtCycleId,
+    type: type,
+    createdAt: createdAt,
+    description: description ?? '',
+    amount: amount,
+    balanceAfter: balanceAfter,
+    relatedSaleId: relatedSaleId,
+    items: items.map((e) => e.toEntity()).toList(),
+    paymentSplits: paymentSplits.map((e) => e.toEntity()).toList(),
+  );
+}
 
   factory CustomerLedgerEntryModel.fromEntity(CustomerLedgerEntry entry) {
     return CustomerLedgerEntryModel(
       id: entry.id,
       customerId: entry.customerId,
+      debtCycleId: entry.debtCycleId,
       type: entry.type,
       createdAt: entry.createdAt,
       description: entry.description,
@@ -77,7 +83,8 @@ class CustomerLedgerEntryModel extends HiveObject {
       balanceAfter: entry.balanceAfter,
       relatedSaleId: entry.relatedSaleId,
       items: entry.items.map(CustomerLedgerItemModel.fromEntity).toList(),
-      paymentSplits: entry.paymentSplits.map(PaymentSplitModel.fromEntity).toList(),
+      paymentSplits:
+          entry.paymentSplits.map(PaymentSplitModel.fromEntity).toList(),
     );
   }
 }

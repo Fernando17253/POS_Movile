@@ -3,6 +3,7 @@ import 'package:equatable/equatable.dart';
 
 import '../../../../core/usecase/usecase.dart';
 import '../../domain/entities/customer.dart';
+import '../../domain/entities/customer_debt_cycle.dart';
 import '../../domain/entities/customer_ledger_entry.dart';
 import '../../domain/usecases/customer_usecases.dart';
 
@@ -16,6 +17,10 @@ class CustomerBloc extends Bloc<CustomerEvent, CustomerState> {
   final DeleteCustomerUseCase deleteCustomerUseCase;
   final GetCustomerLedgerUseCase getCustomerLedgerUseCase;
   final AddCustomerLedgerEntryUseCase addCustomerLedgerEntryUseCase;
+  final GetOpenDebtCycleUseCase getOpenDebtCycleUseCase;
+  final GetClosedDebtCyclesUseCase getClosedDebtCyclesUseCase;
+  final SaveDebtCycleUseCase saveDebtCycleUseCase;
+  final GetDebtCycleEntriesUseCase getDebtCycleEntriesUseCase;
 
   CustomerBloc({
     required this.getCustomersUseCase,
@@ -24,6 +29,10 @@ class CustomerBloc extends Bloc<CustomerEvent, CustomerState> {
     required this.deleteCustomerUseCase,
     required this.getCustomerLedgerUseCase,
     required this.addCustomerLedgerEntryUseCase,
+    required this.getOpenDebtCycleUseCase,
+    required this.getClosedDebtCyclesUseCase,
+    required this.saveDebtCycleUseCase,
+    required this.getDebtCycleEntriesUseCase,
   }) : super(const CustomerState()) {
     on<LoadCustomers>(_onLoadCustomers);
     on<SearchCustomers>(_onSearchCustomers);
@@ -32,6 +41,7 @@ class CustomerBloc extends Bloc<CustomerEvent, CustomerState> {
     on<DeleteCustomerEvent>(_onDeleteCustomer);
     on<LoadCustomerLedger>(_onLoadCustomerLedger);
     on<AddCustomerLedgerEntryEvent>(_onAddCustomerLedgerEntry);
+    on<LoadCustomerDetailData>(_onLoadCustomerDetailData);
   }
 
   Future<void> _onLoadCustomers(
@@ -227,6 +237,81 @@ class CustomerBloc extends Bloc<CustomerEvent, CustomerState> {
     );
   }
 
+  Future<void> _onLoadCustomerDetailData(
+    LoadCustomerDetailData event,
+    Emitter<CustomerState> emit,
+  ) async {
+    emit(state.copyWith(status: CustomerStatus.loading, clearMessage: true));
+
+    final ledgerResult = await getCustomerLedgerUseCase(event.customerId);
+    final openCycleResult = await getOpenDebtCycleUseCase(event.customerId);
+    final closedCyclesResult = await getClosedDebtCyclesUseCase(event.customerId);
+
+    if (ledgerResult.isLeft()) {
+      ledgerResult.fold(
+        (failure) => emit(
+          state.copyWith(
+            status: CustomerStatus.error,
+            message: failure.message,
+          ),
+        ),
+        (_) {},
+      );
+      return;
+    }
+
+    if (openCycleResult.isLeft()) {
+      openCycleResult.fold(
+        (failure) => emit(
+          state.copyWith(
+            status: CustomerStatus.error,
+            message: failure.message,
+          ),
+        ),
+        (_) {},
+      );
+      return;
+    }
+
+    if (closedCyclesResult.isLeft()) {
+      closedCyclesResult.fold(
+        (failure) => emit(
+          state.copyWith(
+            status: CustomerStatus.error,
+            message: failure.message,
+          ),
+        ),
+        (_) {},
+      );
+      return;
+    }
+
+    final ledgerEntries = ledgerResult.fold<List<CustomerLedgerEntry>>(
+      (_) => const [],
+      (entries) => entries,
+    );
+
+    final openDebtCycle = openCycleResult.fold<CustomerDebtCycle?>(
+      (_) => null,
+      (cycle) => cycle,
+    );
+
+    final closedDebtCycles = closedCyclesResult.fold<List<CustomerDebtCycle>>(
+      (_) => const [],
+      (cycles) => cycles,
+    );
+
+    emit(
+      state.copyWith(
+        status: CustomerStatus.loaded,
+        ledgerEntries: ledgerEntries,
+        openDebtCycle: openDebtCycle,
+        closedDebtCycles: closedDebtCycles,
+        clearOpenDebtCycle: openDebtCycle == null,
+      ),
+    );
+  }
+
   Future<void> _onAddCustomerLedgerEntry(
     AddCustomerLedgerEntryEvent event,
     Emitter<CustomerState> emit,
@@ -253,7 +338,7 @@ class CustomerBloc extends Bloc<CustomerEvent, CustomerState> {
         );
 
         add(const LoadCustomers());
-        add(LoadCustomerLedger(event.entry.customerId));
+        add(LoadCustomerDetailData(event.entry.customerId));
       },
     );
   }

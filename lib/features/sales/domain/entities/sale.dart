@@ -17,6 +17,10 @@ class Sale extends Equatable {
   final String? customerName;
   final bool isCustomerLedger;
 
+  final bool isPartialCustomerLedger;
+  final double? paidAmount;
+  final double? pendingAmount;
+
   const Sale({
     required this.id,
     required this.createdAt,
@@ -31,6 +35,9 @@ class Sale extends Equatable {
     this.customerId,
     this.customerName,
     this.isCustomerLedger = false,
+    this.isPartialCustomerLedger = false,
+    this.paidAmount,
+    this.pendingAmount,
   });
 
   @override
@@ -48,5 +55,8 @@ class Sale extends Equatable {
         customerId,
         customerName,
         isCustomerLedger,
+        isPartialCustomerLedger,
+        paidAmount,
+        pendingAmount,
       ];
 }

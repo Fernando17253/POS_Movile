@@ -64,3 +64,12 @@ class AddCustomerLedgerEntryEvent extends CustomerEvent {
   @override
   List<Object?> get props => [entry];
 }
+
+class LoadCustomerDetailData extends CustomerEvent {
+  final String customerId;
+
+  const LoadCustomerDetailData(this.customerId);
+
+  @override
+  List<Object?> get props => [customerId];
+}

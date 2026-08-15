@@ -56,6 +56,10 @@ Future<void> init() async {
       deleteCustomerUseCase: sl(),
       getCustomerLedgerUseCase: sl(),
       addCustomerLedgerEntryUseCase: sl(),
+      getOpenDebtCycleUseCase: sl(),
+      getClosedDebtCyclesUseCase: sl(),
+      saveDebtCycleUseCase: sl(),
+      getDebtCycleEntriesUseCase: sl(),
     ),
   );
 
@@ -92,6 +96,10 @@ Future<void> init() async {
   sl.registerLazySingleton(() => DeleteCustomerUseCase(sl()));
   sl.registerLazySingleton(() => GetCustomerLedgerUseCase(sl()));
   sl.registerLazySingleton(() => AddCustomerLedgerEntryUseCase(sl()));
+  sl.registerLazySingleton(() => GetOpenDebtCycleUseCase(sl()));
+  sl.registerLazySingleton(() => GetClosedDebtCyclesUseCase(sl()));
+  sl.registerLazySingleton(() => SaveDebtCycleUseCase(sl()));
+  sl.registerLazySingleton(() => GetDebtCycleEntriesUseCase(sl()));
 
   // Customers - Repository
   sl.registerLazySingleton<CustomerRepository>(

@@ -8,6 +8,7 @@ import '../../features/customers/data/models/customer_model.dart';
 import '../../features/customers/data/models/customer_ledger_item_model.dart';
 import '../../features/customers/data/models/payment_split_model.dart';
 import '../../features/customers/data/models/customer_ledger_entry_model.dart';
+import '../../features/customers/data/models/customer_debt_cycle_model.dart';
 
 class HiveDatabase {
   static const String productBoxName = 'products';
@@ -16,7 +17,8 @@ class HiveDatabase {
   static const String saleBoxName = 'sales';
   static const String customerBoxName = 'customers';
   static const String customerLedgerBoxName = 'customer_ledger_entries';
-  
+  static const String customerDebtCycleBoxName = 'customer_debt_cycles';
+
   static Future<void> init() async {
     await Hive.initFlutter();
 
@@ -44,18 +46,19 @@ class HiveDatabase {
     if (!Hive.isAdapterRegistered(23)) {
       Hive.registerAdapter(CustomerLedgerEntryModelAdapter());
     }
+    if (!Hive.isAdapterRegistered(24)) {
+      Hive.registerAdapter(CustomerDebtCycleModelAdapter());
+    }
 
-    await Hive.openBox<CustomerLedgerEntryModel>(customerLedgerBoxName);
     await Hive.openBox<ProductModel>(productBoxName);
     await Hive.openBox<ShopModel>(shopBoxName);
     await Hive.openBox<SaleModel>(saleBoxName);
     await Hive.openBox<CustomerModel>(customerBoxName);
+    await Hive.openBox<CustomerLedgerEntryModel>(customerLedgerBoxName);
+    await Hive.openBox<CustomerDebtCycleModel>(customerDebtCycleBoxName);
     await Hive.openBox(settingsBoxName);
   }
 
-  static Box<CustomerLedgerEntryModel> get customerLedgerBox =>
-      Hive.box<CustomerLedgerEntryModel>(customerLedgerBoxName);
-      
   static Box<ProductModel> get productBox =>
       Hive.box<ProductModel>(productBoxName);
 
@@ -67,6 +70,12 @@ class HiveDatabase {
 
   static Box<CustomerModel> get customerBox =>
       Hive.box<CustomerModel>(customerBoxName);
+
+  static Box<CustomerLedgerEntryModel> get customerLedgerBox =>
+      Hive.box<CustomerLedgerEntryModel>(customerLedgerBoxName);
+
+  static Box<CustomerDebtCycleModel> get customerDebtCycleBox =>
+      Hive.box<CustomerDebtCycleModel>(customerDebtCycleBoxName);
 
   static Box get settingsBox =>
       Hive.box(settingsBoxName);

@@ -16,6 +16,7 @@ import '../../../customers/data/repositories/customer_repository_impl.dart';
 import '../../../customers/domain/entities/customer_ledger_entry.dart';
 import '../../../customers/domain/entities/customer_ledger_item.dart';
 import '../../../customers/presentation/bloc/customer_bloc.dart';
+import '../../../customers/domain/entities/customer_debt_cycle.dart';
 
 import '../../../product/data/repositories/product_repository_impl.dart';
 import '../../../product/domain/entities/product.dart';
@@ -35,11 +36,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
   final TextEditingController _transferReferenceController =
       TextEditingController();
 
+  final TextEditingController _partialPaidController = TextEditingController();
+
   final _customerRepository = CustomerRepositoryImpl();
   final ValueNotifier<double> _sheetExtent = ValueNotifier(0.10);
   final _salesRepository = SalesRepositoryImpl();
   final _productRepository = ProductRepositoryImpl();
 
+  bool _isPartialCustomerLedger = false;
   String _paymentMethod = 'cash'; // cash | transfer | point
   bool _isSavingSale = false;
 
@@ -48,6 +52,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   String _formatCurrency(double value) {
     return '\$${value.toStringAsFixed(2)} MXN';
+  }
+
+  double _calculatePartialPending(double total) {
+    final paidNow = _parseDouble(_partialPaidController.text);
+    final pending = total - paidNow;
+    return pending < 0 ? 0 : pending;
   }
 
   double _parseDouble(String value) {
@@ -127,6 +137,40 @@ Future<void> _restoreStock(List<Product> originalProducts) async {
   }
 }
 
+Future<CustomerDebtCycle?> _getOrCreateOpenDebtCycle(Customer customer) async {
+  final openCycleResult = await _customerRepository.getOpenDebtCycle(customer.id);
+
+  return await openCycleResult.fold(
+    (_) async => null,
+    (existingCycle) async {
+      if (existingCycle != null) {
+        return existingCycle;
+      }
+
+      final newCycle = CustomerDebtCycle(
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        customerId: customer.id,
+        customerNameSnapshot: customer.name,
+        openedAt: DateTime.now(),
+        closedAt: null,
+        isClosed: false,
+        totalCharged: 0,
+        totalPaid: 0,
+        finalBalance: customer.currentBalance,
+        totalItems: 0,
+        movementCount: 0,
+      );
+
+      final saveResult = await _customerRepository.saveDebtCycle(newCycle);
+
+      return saveResult.fold(
+        (_) => null,
+        (_) => newCycle,
+      );
+    },
+  );
+}
+
 Future<void> _saveSaleToCustomerLedger(BillingState billingState) async {
   if (_selectedCustomer == null) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -143,34 +187,62 @@ Future<void> _saveSaleToCustomerLedger(BillingState billingState) async {
   final saleId = DateTime.now().millisecondsSinceEpoch.toString();
   final createdAt = DateTime.now();
 
-  final sale = Sale(
-    id: saleId,
-    createdAt: createdAt,
-    items: billingState.cartItems.map((item) {
-      return SaleItem(
-        productId: item.product.id,
-        productName: item.product.name,
-        internalCode: item.product.internalCode,
-        barcode: item.product.barcode,
-        imageUrl: item.product.imageUrl,
-        localImagePath: item.product.localImagePath,
-        unitType: item.product.unitType,
-        quantity: item.quantity,
-        unitPrice: item.product.price,
-        total: item.total,
-      );
-    }).toList(),
-    subtotal: total,
-    discount: 0,
-    total: total,
-    paymentMethod: 'customer_ledger',
-    amountReceived: null,
-    changeAmount: null,
-    transferReference: null,
-    customerId: currentCustomer.id,
-    customerName: currentCustomer.name,
-    isCustomerLedger: true,
+  final openCycle = await _getOrCreateOpenDebtCycle(currentCustomer);
+
+if (!mounted) return;
+
+if (openCycle == null) {
+  final originalProducts =
+      billingState.cartItems.map((item) => item.product).toList();
+
+  await _restoreStock(originalProducts);
+
+  if (!mounted) return;
+
+  setState(() {
+    _isSavingSale = false;
+  });
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text('No se pudo crear o recuperar el ciclo de adeudo.'),
+      backgroundColor: Colors.red,
+    ),
   );
+  return;
+}
+
+final sale = Sale(
+  id: saleId,
+  createdAt: createdAt,
+  items: billingState.cartItems.map((item) {
+    return SaleItem(
+      productId: item.product.id,
+      productName: item.product.name,
+      internalCode: item.product.internalCode,
+      barcode: item.product.barcode,
+      imageUrl: item.product.imageUrl,
+      localImagePath: item.product.localImagePath,
+      unitType: item.product.unitType,
+      quantity: item.quantity,
+      unitPrice: item.product.price,
+      total: item.total,
+    );
+  }).toList(),
+  subtotal: total,
+  discount: 0,
+  total: total,
+  paymentMethod: 'customer_ledger',
+  amountReceived: null,
+  changeAmount: null,
+  transferReference: null,
+  customerId: currentCustomer.id,
+  customerName: currentCustomer.name,
+  isCustomerLedger: true,
+  isPartialCustomerLedger: false,
+  paidAmount: 0,
+  pendingAmount: total,
+);
 
   final saleResult = await _salesRepository.saveSale(sale);
 
@@ -202,29 +274,30 @@ Future<void> _saveSaleToCustomerLedger(BillingState billingState) async {
       final balanceAfter = currentCustomer.currentBalance + total;
 
       final entry = CustomerLedgerEntry(
-        id: '$saleId-ledger',
-        customerId: currentCustomer.id,
-        type: 'product_charge',
-        createdAt: createdAt,
-        description: 'Venta enviada a libreta',
-        amount: total,
-        balanceAfter: balanceAfter,
-        relatedSaleId: saleId,
-        items: billingState.cartItems.map((item) {
-          return CustomerLedgerItem(
-            productId: item.product.id,
-            productName: item.product.name,
-            internalCode: item.product.internalCode,
-            barcode: item.product.barcode,
-            imageUrl: item.product.imageUrl,
-            localImagePath: item.product.localImagePath,
-            quantity: item.quantity,
-            unitPrice: item.product.price,
-            total: item.total,
-          );
-        }).toList(),
-        paymentSplits: const [],
-      );
+  id: '$saleId-ledger',
+  customerId: currentCustomer.id,
+  debtCycleId: openCycle.id,
+  type: 'product_charge',
+  createdAt: createdAt,
+  description: 'Venta enviada a libreta',
+  amount: total,
+  balanceAfter: balanceAfter,
+  relatedSaleId: saleId,
+  items: billingState.cartItems.map((item) {
+    return CustomerLedgerItem(
+      productId: item.product.id,
+      productName: item.product.name,
+      internalCode: item.product.internalCode,
+      barcode: item.product.barcode,
+      imageUrl: item.product.imageUrl,
+      localImagePath: item.product.localImagePath,
+      quantity: item.quantity,
+      unitPrice: item.product.price,
+      total: item.total,
+    );
+  }).toList(),
+  paymentSplits: const [],
+);
 
       final ledgerResult = await _customerRepository.addCustomerLedgerEntry(
         entry,
@@ -280,6 +353,194 @@ Future<void> _saveSaleToCustomerLedger(BillingState billingState) async {
   );
 }
 
+Future<void> _savePartialSaleToCustomerLedger(BillingState billingState) async {
+  if (_selectedCustomer == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Selecciona un cliente para registrar el adeudo.'),
+        backgroundColor: Colors.red,
+      ),
+    );
+    return;
+  }
+
+  final total = billingState.totalAmount;
+  final paidNow = _parseDouble(_partialPaidController.text);
+  final pending = total - paidNow;
+  final currentCustomer = _selectedCustomer!;
+  final saleId = DateTime.now().millisecondsSinceEpoch.toString();
+  final createdAt = DateTime.now();
+
+  final openCycle = await _getOrCreateOpenDebtCycle(currentCustomer);
+
+if (!mounted) return;
+
+if (openCycle == null) {
+  final originalProducts =
+      billingState.cartItems.map((item) => item.product).toList();
+
+  await _restoreStock(originalProducts);
+
+  if (!mounted) return;
+
+  setState(() {
+    _isSavingSale = false;
+  });
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text('No se pudo crear o recuperar el ciclo de adeudo.'),
+      backgroundColor: Colors.red,
+    ),
+  );
+  return;
+}
+
+  final sale = Sale(
+    id: saleId,
+    createdAt: createdAt,
+    items: billingState.cartItems.map((item) {
+      return SaleItem(
+        productId: item.product.id,
+        productName: item.product.name,
+        internalCode: item.product.internalCode,
+        barcode: item.product.barcode,
+        imageUrl: item.product.imageUrl,
+        localImagePath: item.product.localImagePath,
+        unitType: item.product.unitType,
+        quantity: item.quantity,
+        unitPrice: item.product.price,
+        total: item.total,
+      );
+    }).toList(),
+    subtotal: total,
+    discount: 0,
+    total: total,
+    paymentMethod: _paymentMethod,
+    amountReceived: _paymentMethod == 'cash' ? paidNow : null,
+    changeAmount: null,
+    transferReference: _paymentMethod == 'transfer'
+        ? (_transferReferenceController.text.trim().isEmpty
+            ? null
+            : _transferReferenceController.text.trim())
+        : null,
+    customerId: currentCustomer.id,
+    customerName: currentCustomer.name,
+    isCustomerLedger: true,
+    isPartialCustomerLedger: true,
+    paidAmount: paidNow,
+    pendingAmount: pending,
+  );
+
+  final saleResult = await _salesRepository.saveSale(sale);
+
+  if (!mounted) return;
+
+  await saleResult.fold(
+    (failure) async {
+      final originalProducts =
+          billingState.cartItems.map((item) => item.product).toList();
+
+      await _restoreStock(originalProducts);
+
+      if (!mounted) return;
+
+      setState(() {
+        _isSavingSale = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'No se pudo guardar la venta parcial en historial: ${failure.message}',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+    },
+    (_) async {
+      final balanceAfter = currentCustomer.currentBalance + pending;
+
+      final entry = CustomerLedgerEntry(
+  id: '$saleId-ledger',
+  customerId: currentCustomer.id,
+  debtCycleId: openCycle.id,
+  type: 'product_charge',
+  createdAt: createdAt,
+  description: 'Venta con pago parcial',
+  amount: pending,
+  balanceAfter: balanceAfter,
+  relatedSaleId: saleId,
+  items: billingState.cartItems.map((item) {
+    return CustomerLedgerItem(
+      productId: item.product.id,
+      productName: item.product.name,
+      internalCode: item.product.internalCode,
+      barcode: item.product.barcode,
+      imageUrl: item.product.imageUrl,
+      localImagePath: item.product.localImagePath,
+      quantity: item.quantity,
+      unitPrice: item.product.price,
+      total: item.total,
+    );
+  }).toList(),
+  paymentSplits: const [],
+);
+
+      final ledgerResult = await _customerRepository.addCustomerLedgerEntry(
+        entry,
+      );
+
+      if (!mounted) return;
+
+      ledgerResult.fold(
+        (failure) async {
+          await HiveDatabase.saleBox.delete(saleId);
+
+          final originalProducts =
+              billingState.cartItems.map((item) => item.product).toList();
+          await _restoreStock(originalProducts);
+
+          if (!mounted) return;
+
+          setState(() {
+            _isSavingSale = false;
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'No se pudo guardar el pendiente en libreta: ${failure.message}',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        },
+        (_) {
+          setState(() {
+            _isSavingSale = false;
+          });
+
+          context.read<ProductBloc>().add(LoadProducts());
+          context.read<CustomerBloc>().add(const LoadCustomers());
+          context.read<BillingBloc>().add(ClearCartEvent());
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Se cobraron ${_formatCurrency(paidNow)} y quedaron ${_formatCurrency(pending)} en la libreta de ${currentCustomer.name}.',
+              ),
+              backgroundColor: Colors.green,
+            ),
+          );
+
+          context.go('/');
+        },
+      );
+    },
+  );
+}
+
 Future<void> _selectCustomer() async {
   final customer = await context.push<Customer>('/customers/select');
 
@@ -287,6 +548,8 @@ Future<void> _selectCustomer() async {
     setState(() {
       _selectedCustomer = customer;
       _sendToCustomerLedger = true;
+      _isPartialCustomerLedger = false;
+      _partialPaidController.clear();
     });
   }
 }
@@ -295,6 +558,8 @@ void _clearSelectedCustomer() {
   setState(() {
     _selectedCustomer = null;
     _sendToCustomerLedger = false;
+    _isPartialCustomerLedger = false;
+    _partialPaidController.clear();
   });
 }
 
@@ -367,6 +632,40 @@ Future<void> _confirmSale(BillingState billingState) async {
   final amountReceived = _parseDouble(_amountReceivedController.text);
   final change = _calculateChange(total);
 
+if (_sendToCustomerLedger && _isPartialCustomerLedger) {
+  final paidNow = _parseDouble(_partialPaidController.text);
+
+  if (_partialPaidController.text.trim().isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Ingresa cuánto pagó el cliente ahora.'),
+        backgroundColor: Colors.red,
+      ),
+    );
+    return;
+  }
+
+  if (paidNow <= 0) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('El pago parcial debe ser mayor a 0.'),
+        backgroundColor: Colors.red,
+      ),
+    );
+    return;
+  }
+
+  if (paidNow >= total) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('El pago parcial debe ser menor al total de la venta.'),
+        backgroundColor: Colors.red,
+      ),
+    );
+    return;
+  }
+}
+
 if (!_sendToCustomerLedger && _paymentMethod == 'cash') {
   if (_amountReceivedController.text.trim().isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -414,6 +713,11 @@ if (!_sendToCustomerLedger && _paymentMethod == 'cash') {
     return;
   }
 
+if (_sendToCustomerLedger && _isPartialCustomerLedger) {
+  await _savePartialSaleToCustomerLedger(billingState);
+  return;
+}
+
 if (_sendToCustomerLedger) {
   await _saveSaleToCustomerLedger(billingState);
   return;
@@ -450,6 +754,9 @@ if (_sendToCustomerLedger) {
     customerId: null,
     customerName: null,
     isCustomerLedger: false,
+    isPartialCustomerLedger: false,
+    paidAmount: null,
+    pendingAmount: null,
   );
 
   final result = await _salesRepository.saveSale(sale);
@@ -479,6 +786,7 @@ if (_sendToCustomerLedger) {
   });
 
   context.read<ProductBloc>().add(LoadProducts());
+  context.read<CustomerBloc>().add(const LoadCustomers());
   context.read<BillingBloc>().add(ClearCartEvent());
 
   ScaffoldMessenger.of(context).showSnackBar(
@@ -498,6 +806,7 @@ if (_sendToCustomerLedger) {
     _amountReceivedController.dispose();
     _transferReferenceController.dispose();
     _sheetExtent.dispose();
+    _partialPaidController.dispose();
     super.dispose();
   }
 
@@ -822,16 +1131,18 @@ Container(
         spacing: 10,
         runSpacing: 10,
         children: [
-          ChoiceChip(
-            label: const Text('Venta normal'),
-            selected: !_sendToCustomerLedger,
-            onSelected: (_) {
-              setState(() {
-                _sendToCustomerLedger = false;
-                _selectedCustomer = null;
-              });
-            },
-          ),
+ChoiceChip(
+  label: const Text('Venta normal'),
+  selected: !_sendToCustomerLedger,
+  onSelected: (_) {
+    setState(() {
+      _sendToCustomerLedger = false;
+      _selectedCustomer = null;
+      _isPartialCustomerLedger = false;
+      _partialPaidController.clear();
+    });
+  },
+),
           ChoiceChip(
             label: const Text('Mandar a libreta'),
             selected: _sendToCustomerLedger,
@@ -841,149 +1152,179 @@ Container(
           ),
         ],
       ),
-      if (_sendToCustomerLedger) ...[
-        const SizedBox(height: 12),
-        if (_selectedCustomer != null)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppTheme.primaryColor.withValues(alpha: 0.06),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
+if (_sendToCustomerLedger) ...[
+  const SizedBox(height: 12),
+  if (_selectedCustomer != null)
+    Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.primaryColor.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Cliente seleccionado',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _selectedCustomer!.name,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      if (_selectedCustomer!.phone != null &&
-                          _selectedCustomer!.phone!.trim().isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          _selectedCustomer!.phone!,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[700],
-                          ),
-                        ),
-                      ],
-                    ],
+                const Text(
+                  'Cliente seleccionado',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-                IconButton(
-                  onPressed: _clearSelectedCustomer,
-                  icon: const Icon(Icons.close),
-                  tooltip: 'Quitar cliente',
+                const SizedBox(height: 4),
+                Text(
+                  _selectedCustomer!.name,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
+                if (_selectedCustomer!.phone != null &&
+                    _selectedCustomer!.phone!.trim().isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    _selectedCustomer!.phone!,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                ],
               ],
             ),
-          )
-        else
-          OutlinedButton.icon(
-            onPressed: _selectCustomer,
-            icon: const Icon(Icons.person_search_outlined),
-            label: const Text('Seleccionar cliente'),
           ),
-      ],
+          IconButton(
+            onPressed: _clearSelectedCustomer,
+            icon: const Icon(Icons.close),
+            tooltip: 'Quitar cliente',
+          ),
+        ],
+      ),
+    )
+  else
+    OutlinedButton.icon(
+      onPressed: _selectCustomer,
+      icon: const Icon(Icons.person_search_outlined),
+      label: const Text('Seleccionar cliente'),
+    ),
+],
+if (_sendToCustomerLedger && _selectedCustomer != null) ...[
+  const SizedBox(height: 12),
+  Wrap(
+    spacing: 10,
+    runSpacing: 10,
+    children: [
+      ChoiceChip(
+        label: const Text('Adeudo completo'),
+        selected: !_isPartialCustomerLedger,
+        onSelected: (_) {
+          setState(() {
+            _isPartialCustomerLedger = false;
+            _partialPaidController.clear();
+          });
+        },
+      ),
+      ChoiceChip(
+        label: const Text('Pago parcial'),
+        selected: _isPartialCustomerLedger,
+        onSelected: (_) {
+          setState(() {
+            _isPartialCustomerLedger = true;
+          });
+        },
+      ),
+    ],
+  ),
+],
     ],
   ),
 ),
 
                             const SizedBox(height: 16),
 
-                            if (isFull) ...[
-                              const Text(
-                                'Método de pago',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              Wrap(
-                                spacing: 10,
-                                runSpacing: 10,
-                                children: [
-ChoiceChip(
-  label: const Text('Efectivo'),
-  selected: _paymentMethod == 'cash',
-  onSelected: (_) {
-    setState(() {
-      _paymentMethod = 'cash';
-    });
-  },
-),
-ChoiceChip(
-  label: const Text('Transferencia'),
-  selected: _paymentMethod == 'transfer',
-  onSelected: (_) {
-    setState(() {
-      _paymentMethod = 'transfer';
-    });
-  },
-),
-ChoiceChip(
-  label: const Text('Tarjeta / Point'),
-  selected: _paymentMethod == 'point',
-  onSelected: (_) {
-    setState(() {
-      _paymentMethod = 'point';
-    });
-  },
-),
-                                ],
-                              ),
-                              const SizedBox(height: 14),
-                            ] else ...[
-  Row(
-    children: [
-      Expanded(
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 10,
-            vertical: 8,
-          ),
-          decoration: BoxDecoration(
-            color: AppTheme.primaryColor.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Text(
-_paymentMethod == 'cash'
-    ? 'Método: Efectivo'
-    : _paymentMethod == 'transfer'
-        ? 'Método: Transferencia'
-        : 'Método: Tarjeta / Point',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
+if (!(_sendToCustomerLedger && !_isPartialCustomerLedger)) ...[
+  if (isFull) ...[
+    const Text(
+      'Método de pago',
+      style: TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+    const SizedBox(height: 10),
+    Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: [
+        ChoiceChip(
+          label: const Text('Efectivo'),
+          selected: _paymentMethod == 'cash',
+          onSelected: (_) {
+            setState(() {
+              _paymentMethod = 'cash';
+            });
+          },
+        ),
+        ChoiceChip(
+          label: const Text('Transferencia'),
+          selected: _paymentMethod == 'transfer',
+          onSelected: (_) {
+            setState(() {
+              _paymentMethod = 'transfer';
+            });
+          },
+        ),
+        ChoiceChip(
+          label: const Text('Tarjeta / Point'),
+          selected: _paymentMethod == 'point',
+          onSelected: (_) {
+            setState(() {
+              _paymentMethod = 'point';
+            });
+          },
+        ),
+      ],
+    ),
+    const SizedBox(height: 14),
+  ] else ...[
+    Row(
+      children: [
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 10,
+              vertical: 8,
+            ),
+            decoration: BoxDecoration(
+              color: AppTheme.primaryColor.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              _paymentMethod == 'cash'
+                  ? 'Método: Efectivo'
+                  : _paymentMethod == 'transfer'
+                      ? 'Método: Transferencia'
+                      : 'Método: Tarjeta / Point',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ),
-      ),
-    ],
-  ),
-  const SizedBox(height: 12),
+      ],
+    ),
+    const SizedBox(height: 12),
+  ],
 ],
 
-if (_sendToCustomerLedger) ...[
+if (_sendToCustomerLedger && !_isPartialCustomerLedger) ...[
   Container(
     width: double.infinity,
     padding: const EdgeInsets.all(12),
@@ -992,13 +1333,62 @@ if (_sendToCustomerLedger) ...[
       borderRadius: BorderRadius.circular(12),
     ),
     child: const Text(
-      'Esta venta se registrará como adeudo en la libreta del cliente. En este paso no se cobrará monto recibido.',
+      'Esta venta se registrará como adeudo completo en la libreta del cliente. En este paso no se cobrará monto recibido.',
       style: TextStyle(
         fontSize: 12,
         height: 1.4,
       ),
     ),
   ),
+] else if (_sendToCustomerLedger && _isPartialCustomerLedger) ...[
+  TextField(
+    controller: _partialPaidController,
+    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+    onChanged: (_) => setState(() {}),
+    decoration: const InputDecoration(
+      labelText: 'Monto cobrado ahora',
+      hintText: '0.00',
+      prefixText: '\$ ',
+    ),
+  ),
+  const SizedBox(height: 12),
+  _summaryRow(
+    'Se cobra ahora',
+    _formatCurrency(_parseDouble(_partialPaidController.text)),
+  ),
+  const SizedBox(height: 8),
+  _summaryRow(
+    'Queda pendiente',
+    _formatCurrency(_calculatePartialPending(total)),
+    isTotal: true,
+  ),
+  if (_paymentMethod == 'transfer') ...[
+    const SizedBox(height: 12),
+    TextField(
+      controller: _transferReferenceController,
+      decoration: const InputDecoration(
+        labelText: 'Referencia (opcional)',
+        hintText: 'Ej. Folio o referencia',
+      ),
+    ),
+  ] else if (_paymentMethod == 'point') ...[
+    const SizedBox(height: 12),
+    Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.primaryColor.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Text(
+        'El monto capturado se tomará como lo cobrado ahora con terminal Point. El resto quedará pendiente en libreta.',
+        style: TextStyle(
+          fontSize: 12,
+          height: 1.4,
+        ),
+      ),
+    ),
+  ],
 ] else if (_paymentMethod == 'cash') ...[
   TextField(
     controller: _amountReceivedController,

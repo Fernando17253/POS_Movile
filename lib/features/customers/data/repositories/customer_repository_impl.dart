@@ -3,10 +3,12 @@ import 'package:fpdart/fpdart.dart';
 import '../../../../core/data/hive_database.dart';
 import '../../../../core/error/failure.dart';
 import '../../domain/entities/customer.dart';
+import '../../domain/entities/customer_debt_cycle.dart';
 import '../../domain/entities/customer_ledger_entry.dart';
 import '../../domain/repositories/customer_repository.dart';
-import '../models/customer_model.dart';
+import '../models/customer_debt_cycle_model.dart';
 import '../models/customer_ledger_entry_model.dart';
+import '../models/customer_model.dart';
 
 class CustomerRepositoryImpl implements CustomerRepository {
   @override
@@ -134,6 +136,108 @@ class CustomerRepositoryImpl implements CustomerRepository {
       await customerBox.put(updatedCustomer.id, updatedCustomer);
 
       return const Right(null);
+    } catch (e) {
+      return Left(CacheFailure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, CustomerDebtCycle?>> getOpenDebtCycle(
+    String customerId,
+  ) async {
+    try {
+      final box = HiveDatabase.customerDebtCycleBox;
+
+      final cycles = box.values
+          .map((model) => model.toEntity())
+          .where((cycle) => cycle.customerId == customerId && !cycle.isClosed)
+          .toList()
+        ..sort((a, b) => b.openedAt.compareTo(a.openedAt));
+
+      if (cycles.isEmpty) {
+        return const Right(null);
+      }
+
+      return Right(cycles.first);
+    } catch (e) {
+      return Left(CacheFailure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, List<CustomerDebtCycle>>> getClosedDebtCycles(
+    String customerId,
+  ) async {
+    try {
+      final box = HiveDatabase.customerDebtCycleBox;
+
+      final cycles = box.values
+          .map((model) => model.toEntity())
+          .where((cycle) => cycle.customerId == customerId && cycle.isClosed)
+          .toList()
+        ..sort((a, b) {
+          final aDate = a.closedAt ?? a.openedAt;
+          final bDate = b.closedAt ?? b.openedAt;
+          return bDate.compareTo(aDate);
+        });
+
+      return Right(cycles);
+    } catch (e) {
+      return Left(CacheFailure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, List<CustomerDebtCycle>>> getAllClosedDebtCycles() async {
+    try {
+      final box = HiveDatabase.customerDebtCycleBox;
+
+      final cycles = box.values
+          .map((model) => model.toEntity())
+          .where((cycle) => cycle.isClosed)
+          .toList()
+        ..sort((a, b) {
+          final aDate = a.closedAt ?? a.openedAt;
+          final bDate = b.closedAt ?? b.openedAt;
+          return bDate.compareTo(aDate);
+        });
+
+      return Right(cycles);
+    } catch (e) {
+      return Left(CacheFailure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, void>> saveDebtCycle(
+    CustomerDebtCycle cycle,
+  ) async {
+    try {
+      final box = HiveDatabase.customerDebtCycleBox;
+      final model = CustomerDebtCycleModel.fromEntity(cycle);
+
+      await box.put(model.id, model);
+
+      return const Right(null);
+    } catch (e) {
+      return Left(CacheFailure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, List<CustomerLedgerEntry>>> getDebtCycleEntries(
+    String debtCycleId,
+  ) async {
+    try {
+      final box = HiveDatabase.customerLedgerBox;
+
+      final entries = box.values
+          .map((model) => model.toEntity())
+          .where((entry) => entry.debtCycleId == debtCycleId)
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      return Right(entries);
     } catch (e) {
       return Left(CacheFailure(e.toString()));
     }

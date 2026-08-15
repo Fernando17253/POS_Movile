@@ -45,6 +45,15 @@ class SaleModel extends HiveObject {
   @HiveField(12)
   final bool isCustomerLedger;
 
+  @HiveField(13)
+  final bool isPartialCustomerLedger;
+
+  @HiveField(14)
+  final double? paidAmount;
+
+  @HiveField(15)
+  final double? pendingAmount;
+
   SaleModel({
     required this.id,
     required this.createdAt,
@@ -59,6 +68,9 @@ class SaleModel extends HiveObject {
     this.customerId,
     this.customerName,
     this.isCustomerLedger = false,
+    this.isPartialCustomerLedger = false,
+    this.paidAmount,
+    this.pendingAmount,
   });
 
   Sale toEntity() {
@@ -76,6 +88,9 @@ class SaleModel extends HiveObject {
       customerId: customerId,
       customerName: customerName,
       isCustomerLedger: isCustomerLedger,
+      isPartialCustomerLedger: isPartialCustomerLedger,
+      paidAmount: paidAmount,
+      pendingAmount: pendingAmount,
     );
   }
 
@@ -94,6 +109,9 @@ class SaleModel extends HiveObject {
       customerId: sale.customerId,
       customerName: sale.customerName,
       isCustomerLedger: sale.isCustomerLedger,
+      isPartialCustomerLedger: sale.isPartialCustomerLedger,
+      paidAmount: sale.paidAmount,
+      pendingAmount: sale.pendingAmount,
     );
   }
 }
