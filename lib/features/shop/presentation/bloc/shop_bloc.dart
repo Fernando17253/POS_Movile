@@ -35,7 +35,6 @@ class ShopBloc extends Bloc<ShopEvent, ShopState> {
     result.fold(
       (failure) => emit(ShopError(failure.message)),
       (_) {
-        // Reload shop to update state with latest data (though local is same)
         add(LoadShopEvent());
         emit(ShopOperationSuccess());
       },

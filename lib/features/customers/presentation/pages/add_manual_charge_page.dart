@@ -11,6 +11,9 @@ import '../bloc/customer_bloc.dart';
 import '../../../../core/widgets/input_label.dart';
 import '../../../../core/widgets/primary_button.dart';
 
+// Importamos nuestros widgets visuales compartidos
+import '../widgets/customer_widgets.dart';
+
 class AddManualChargePage extends StatefulWidget {
   final Customer customer;
 
@@ -39,6 +42,7 @@ class _AddManualChargePageState extends State<AddManualChargePage> {
     super.dispose();
   }
 
+  // --- LÓGICA DE NEGOCIO (MANTENIDA INTACTA) ---
   String _formatCurrency(double value) {
     return '\$${value.toStringAsFixed(2)} MXN';
   }
@@ -57,32 +61,20 @@ class _AddManualChargePageState extends State<AddManualChargePage> {
   }
 
   String? _amountValidator(String? value) {
-    if (value == null || value.trim().isEmpty) {
-      return 'Ingresa el monto';
-    }
-
+    if (value == null || value.trim().isEmpty) return 'Ingresa el monto';
     final parsed = double.tryParse(value.trim().replaceAll(',', '.'));
-    if (parsed == null) {
-      return 'Ingresa un número válido';
-    }
-
-    if (parsed <= 0) {
-      return 'El monto debe ser mayor a 0';
-    }
-
+    if (parsed == null) return 'Ingresa un número válido';
+    if (parsed <= 0) return 'El monto debe ser mayor a 0';
     return null;
   }
 
   Future<CustomerDebtCycle?> _getOrCreateOpenDebtCycle() async {
-    final openCycleResult =
-        await _customerRepository.getOpenDebtCycle(widget.customer.id);
+    final openCycleResult = await _customerRepository.getOpenDebtCycle(widget.customer.id);
 
     return await openCycleResult.fold(
       (_) async => null,
       (existingCycle) async {
-        if (existingCycle != null) {
-          return existingCycle;
-        }
+        if (existingCycle != null) return existingCycle;
 
         final newCycle = CustomerDebtCycle(
           id: DateTime.now().microsecondsSinceEpoch.toString(),
@@ -100,10 +92,7 @@ class _AddManualChargePageState extends State<AddManualChargePage> {
 
         final saveResult = await _customerRepository.saveDebtCycle(newCycle);
 
-        return saveResult.fold(
-          (_) => null,
-          (_) => newCycle,
-        );
+        return saveResult.fold((_) => null, (_) => newCycle);
       },
     );
   }
@@ -118,24 +107,16 @@ class _AddManualChargePageState extends State<AddManualChargePage> {
     final now = DateTime.now();
     final balanceAfter = widget.customer.currentBalance + amount;
 
-    setState(() {
-      _isSaving = true;
-    });
+    setState(() => _isSaving = true);
 
     final openCycle = await _getOrCreateOpenDebtCycle();
 
     if (!mounted) return;
 
     if (openCycle == null) {
-      setState(() {
-        _isSaving = false;
-      });
-
+      setState(() => _isSaving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No se pudo crear o recuperar el ciclo de adeudo.'),
-          backgroundColor: Colors.red,
-        ),
+        const SnackBar(content: Text('No se pudo crear o recuperar el ciclo de adeudo.'), backgroundColor: Colors.red),
       );
       return;
     }
@@ -160,16 +141,8 @@ class _AddManualChargePageState extends State<AddManualChargePage> {
 
     await ledgerResult.fold(
       (failure) async {
-        setState(() {
-          _isSaving = false;
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(failure.message),
-            backgroundColor: Colors.red,
-          ),
-        );
+        setState(() => _isSaving = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(failure.message), backgroundColor: Colors.red));
       },
       (_) async {
         final updatedCycle = openCycle.copyWith(
@@ -187,36 +160,16 @@ class _AddManualChargePageState extends State<AddManualChargePage> {
 
         cycleResult.fold(
           (failure) {
-            setState(() {
-              _isSaving = false;
-            });
-
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'El cargo se guardó, pero no se pudo actualizar el ciclo: ${failure.message}',
-                ),
-                backgroundColor: Colors.orange,
-              ),
-            );
-
+            setState(() => _isSaving = false);
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('El cargo se guardó, pero falló el ciclo: ${failure.message}'), backgroundColor: Colors.orange));
             context.read<CustomerBloc>().add(const LoadCustomers());
-            context.read<CustomerBloc>().add(
-                  LoadCustomerDetailData(widget.customer.id),
-                );
-
+            context.read<CustomerBloc>().add(LoadCustomerDetailData(widget.customer.id));
             context.pop(true);
           },
           (_) {
-            setState(() {
-              _isSaving = false;
-            });
-
+            setState(() => _isSaving = false);
             context.read<CustomerBloc>().add(const LoadCustomers());
-            context.read<CustomerBloc>().add(
-                  LoadCustomerDetailData(widget.customer.id),
-                );
-
+            context.read<CustomerBloc>().add(LoadCustomerDetailData(widget.customer.id));
             context.pop(true);
           },
         );
@@ -224,14 +177,21 @@ class _AddManualChargePageState extends State<AddManualChargePage> {
     );
   }
 
+  // --- INTERFAZ REFACTORIZADA ---
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final customer = widget.customer;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Agregar cargo manual'),
         centerTitle: true,
+        leading: IconButton(
+          icon: Icon(Icons.chevron_left, size: 32, color: theme.primaryColor),
+          onPressed: () => context.pop(),
+        ),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -241,58 +201,95 @@ class _AddManualChargePageState extends State<AddManualChargePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _CustomerSummaryCard(
-                  title: customer.name,
-                  subtitle: customer.phone,
-                  balanceText: _formatCurrency(customer.currentBalance),
-                  nextBalanceText: _formatCurrency(_balanceAfterPreview()),
+                // Tarjeta de Resumen (Reutilizando widgets)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0xFFE5E5EA)),
+                    boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(customer.name, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                      if (customer.phone != null && customer.phone!.trim().isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(customer.phone!, style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey[700])),
+                      ],
+                      const SizedBox(height: 16),
+                      Wrap(
+                        spacing: 12, runSpacing: 12,
+                        children: [
+                          CustomerInfoCard(label: 'Saldo actual', value: _formatCurrency(customer.currentBalance)),
+                          CustomerInfoCard(label: 'Saldo después', value: _formatCurrency(_balanceAfterPreview()), accentColor: Colors.orange),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 20),
+                
+                const SizedBox(height: 32),
+                
                 const InputLabel(text: 'Monto del cargo'),
                 TextFormField(
                   controller: _amountController,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   textInputAction: TextInputAction.next,
                   onChanged: (_) => setState(() {}),
+                  // ¡Texto Gigante para montos de dinero!
+                  style: theme.textTheme.displayMedium,
                   decoration: const InputDecoration(
                     prefixText: '\$ ',
                     hintText: '0.00',
                   ),
                   validator: _amountValidator,
                 ),
-                const SizedBox(height: 20),
+                
+                const SizedBox(height: 24),
+                
                 const InputLabel(text: 'Descripción'),
                 TextFormField(
                   controller: _descriptionController,
-                  maxLines: 4,
+                  maxLines: 3, // Reducido ligeramente para no abarcar tanta pantalla
                   textInputAction: TextInputAction.done,
+                  style: theme.textTheme.bodyLarge,
                   validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Ingresa una descripción';
-                    }
+                    if (value == null || value.trim().isEmpty) return 'Ingresa una descripción';
                     return null;
                   },
                   decoration: const InputDecoration(
-                    hintText:
-                        'Ej. Pendiente de refresco, ajuste manual, préstamo pequeño, etc.',
+                    hintText: 'Ej. Ajuste manual, préstamo pequeño, etc.',
                   ),
                 ),
-                const SizedBox(height: 14),
+                
+                const SizedBox(height: 24),
+                
+                // Mensaje de Advertencia Mejorado
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: Colors.orange.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(12),
+                    color: Colors.orange.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
                   ),
-                  child: const Text(
-                    'Este cargo aumentará el saldo pendiente del cliente y se agregará al adeudo activo.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.4,
-                    ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.warning_amber_rounded, color: Colors.orange.shade800, size: 28),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Este cargo aumentará el saldo pendiente del cliente y se agregará al adeudo activo.',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: Colors.orange.shade900,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -300,134 +297,17 @@ class _AddManualChargePageState extends State<AddManualChargePage> {
           ),
         ),
       ),
-      bottomNavigationBar: PrimaryButton(
-        onPressed: _isSaving ? null : _submit,
-        icon: _isSaving ? Icons.hourglass_top : Icons.playlist_add,
-        label: _isSaving ? 'Guardando cargo...' : 'Guardar cargo',
-        isLoading: _isSaving,
-      ),
-    );
-  }
-}
-
-class _CustomerSummaryCard extends StatelessWidget {
-  final String title;
-  final String? subtitle;
-  final String balanceText;
-  final String nextBalanceText;
-
-  const _CustomerSummaryCard({
-    required this.title,
-    required this.subtitle,
-    required this.balanceText,
-    required this.nextBalanceText,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE5E5EA)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              subtitle!,
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[700],
-              ),
-            ),
-          ],
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              _SummaryInfoCard(
-                label: 'Saldo actual',
-                value: balanceText,
-              ),
-              _SummaryInfoCard(
-                label: 'Saldo después',
-                value: nextBalanceText,
-                highlight: true,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SummaryInfoCard extends StatelessWidget {
-  final String label;
-  final String value;
-  final bool highlight;
-
-  const _SummaryInfoCard({
-    required this.label,
-    required this.value,
-    this.highlight = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final background =
-        highlight ? const Color(0xFFFFF7ED) : Colors.grey.shade100;
-    final foreground =
-        highlight ? const Color(0xFFEA580C) : Colors.grey.shade800;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label.toUpperCase(),
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              color: foreground.withValues(alpha: 0.8),
-              letterSpacing: 0.5,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
-              color: foreground,
-            ),
-          ),
-        ],
+      bottomNavigationBar: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: theme.scaffoldBackgroundColor,
+        ),
+        child: PrimaryButton(
+          onPressed: _isSaving ? null : _submit,
+          icon: _isSaving ? Icons.hourglass_top : Icons.playlist_add,
+          label: _isSaving ? 'Guardando cargo...' : 'Guardar Cargo',
+          isLoading: _isSaving,
+        ),
       ),
     );
   }

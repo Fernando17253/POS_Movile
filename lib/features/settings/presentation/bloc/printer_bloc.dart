@@ -10,8 +10,10 @@ class PrinterBloc extends Bloc<PrinterEvent, PrinterState> {
     on<InitPrinterEvent>(_onInit);
     on<RefreshPrinterEvent>(_onRefresh);
     on<ScanPrintersEvent>(_onScan);
+    on<CancelPrinterSearchEvent>(_onCancelSearch); // NUEVO
     on<ConnectPrinterEvent>(_onConnect);
     on<DisconnectPrinterEvent>(_onDisconnect);
+    on<ForgetPrinterEvent>(_onForget); // NUEVO
     on<TestPrintEvent>(_onTestPrint);
   }
 
@@ -19,21 +21,20 @@ class PrinterBloc extends Bloc<PrinterEvent, PrinterState> {
     final mac = repository.getSavedPrinterMac();
     final name = repository.getSavedPrinterName();
     emit(state.copyWith(
-      status: PrinterStatus.initial,
+      status: mac != null ? PrinterStatus.disconnected : PrinterStatus.initial,
       connectedMac: mac,
       connectedName: name,
     ));
   }
 
-  Future<void> _onRefresh(
-      RefreshPrinterEvent event, Emitter<PrinterState> emit) async {
+  Future<void> _onRefresh(RefreshPrinterEvent event, Emitter<PrinterState> emit) async {
     emit(state.copyWith(status: PrinterStatus.scanning, clearError: true));
     try {
       final devices = await repository.scanDevices();
       if (devices.isEmpty) {
         emit(state.copyWith(
           status: PrinterStatus.scanFailure,
-          errorMessage: 'No paired devices found.',
+          errorMessage: 'No se encontraron dispositivos vinculados.',
           devices: [],
         ));
         return;
@@ -59,20 +60,17 @@ class PrinterBloc extends Bloc<PrinterEvent, PrinterState> {
       if (!connected) {
         emit(state.copyWith(
           status: PrinterStatus.scanFailure,
-          errorMessage: 'Could not connect to any paired device.',
+          errorMessage: 'No se pudo conectar a ningún dispositivo.',
           devices: devices,
         ));
       }
     } catch (e) {
-      emit(state.copyWith(
-        status: PrinterStatus.scanFailure,
-        errorMessage: e.toString(),
-      ));
+      emit(state.copyWith(status: PrinterStatus.scanFailure, errorMessage: e.toString()));
     }
   }
 
-  Future<void> _onScan(
-      ScanPrintersEvent event, Emitter<PrinterState> emit) async {
+  Future<void> _onScan(ScanPrintersEvent event, Emitter<PrinterState> emit) async {
+    // Este evento solo escanea (ideal para levantar el menú visual de selección)
     emit(state.copyWith(status: PrinterStatus.scanning, clearError: true));
     try {
       final devices = await repository.scanDevices();
@@ -81,46 +79,57 @@ class PrinterBloc extends Bloc<PrinterEvent, PrinterState> {
         devices: devices,
       ));
     } catch (e) {
-      emit(state.copyWith(
-        status: PrinterStatus.scanFailure,
-        errorMessage: e.toString(),
-      ));
+      emit(state.copyWith(status: PrinterStatus.scanFailure, errorMessage: e.toString()));
     }
   }
 
-  Future<void> _onConnect(
-      ConnectPrinterEvent event, Emitter<PrinterState> emit) async {
+  void _onCancelSearch(CancelPrinterSearchEvent event, Emitter<PrinterState> emit) {
+    // Retorna al estado anterior (Conectado o Desconectado) y cancela el spinner
+    emit(state.copyWith(
+      status: state.connectedMac != null ? PrinterStatus.disconnected : PrinterStatus.initial,
+      clearError: true,
+    ));
+  }
+
+  Future<void> _onConnect(ConnectPrinterEvent event, Emitter<PrinterState> emit) async {
     emit(state.copyWith(status: PrinterStatus.connecting, clearError: true));
-    final success = await repository.connect(event.mac);
+    final success = await repository.connect(event.device.macAdress);
     if (success) {
-      await repository.savePrinterData(event.mac, event.name);
+      await repository.savePrinterData(event.device.macAdress, event.device.name);
       emit(state.copyWith(
         status: PrinterStatus.connected,
-        connectedMac: event.mac,
-        connectedName: event.name,
+        connectedMac: event.device.macAdress,
+        connectedName: event.device.name,
       ));
     } else {
       emit(state.copyWith(
         status: PrinterStatus.connectionFailure,
-        errorMessage: 'Failed to connect to printer',
+        errorMessage: 'Fallo al conectar con la impresora.',
       ));
     }
   }
 
-  Future<void> _onDisconnect(
-      DisconnectPrinterEvent event, Emitter<PrinterState> emit) async {
+  Future<void> _onDisconnect(DisconnectPrinterEvent event, Emitter<PrinterState> emit) async {
     await repository.disconnect();
-    await repository.clearPrinterData();
-    emit(PrinterState(
+    // Solo desconectamos, NO borramos la memoria de la impresora guardada
+    emit(state.copyWith(
       status: PrinterStatus.disconnected,
-      devices: state.devices,
     ));
   }
 
-  Future<void> _onTestPrint(
-      TestPrintEvent event, Emitter<PrinterState> emit) async {
+  Future<void> _onForget(ForgetPrinterEvent event, Emitter<PrinterState> emit) async {
+    await repository.disconnect();
+    await repository.clearPrinterData();
+    // Borramos todo y regresamos al estado inicial
+    emit(const PrinterState(
+      status: PrinterStatus.initial,
+      devices: [],
+    ));
+  }
+
+  Future<void> _onTestPrint(TestPrintEvent event, Emitter<PrinterState> emit) async {
     emit(state.copyWith(status: PrinterStatus.testPrinting));
     await repository.testPrint(event.shopName);
-    emit(state.copyWith(status: PrinterStatus.scanSuccess));
+    emit(state.copyWith(status: PrinterStatus.connected)); // Regresamos a conectado
   }
 }

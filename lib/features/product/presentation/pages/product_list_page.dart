@@ -4,7 +4,8 @@ import 'package:go_router/go_router.dart';
 import '../bloc/product_bloc.dart';
 import '../../domain/entities/product.dart';
 import '../../../../core/theme/app_theme.dart';
-import 'dart:io';
+
+import '../widgets/product_widgets.dart'; // IMPORTAMOS LOS WIDGETS GIGANTES
 
 class ProductListPage extends StatefulWidget {
   const ProductListPage({super.key});
@@ -76,64 +77,188 @@ class _ProductListPageState extends State<ProductListPage> {
     }
   }
 
+  Future<void> _confirmDelete(Product product) async {
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Eliminar Producto', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+          content: Text(
+            '¿Seguro que deseas eliminar ${product.name} del catálogo?',
+            style: const TextStyle(fontSize: 18),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar', style: TextStyle(fontSize: 18)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text(
+                'Eliminar',
+                style: TextStyle(color: Colors.red, fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldDelete == true && mounted) {
+      context.read<ProductBloc>().add(DeleteProduct(product.id));
+    }
+  }
+
+  // ==========================================
+  // LÓGICA DE REABASTECIMIENTO Y MERMA
+  // ==========================================
+  Future<void> _adjustStock(Product product, {required bool isAdding}) async {
+    final TextEditingController qtyController = TextEditingController();
+    
+    final result = await showDialog<double>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          title: Text(
+            isAdding ? 'Surtir Producto' : 'Registrar Merma',
+            style: TextStyle(
+              fontWeight: FontWeight.bold, 
+              fontSize: 22,
+              color: isAdding ? Colors.green.shade700 : Colors.orange.shade800,
+            ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                isAdding 
+                    ? '¿Cuántas unidades de "${product.name}" ingresaron al inventario?'
+                    : '¿Cuántas unidades de "${product.name}" se dañaron o perdieron?',
+                style: const TextStyle(fontSize: 16),
+              ),
+              const SizedBox(height: 24),
+              TextField(
+                controller: qtyController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                textAlign: TextAlign.center,
+                autofocus: true,
+                style: TextStyle(
+                  fontSize: 42, 
+                  fontWeight: FontWeight.w900, 
+                  color: isAdding ? Colors.green.shade700 : Colors.orange.shade800
+                ),
+                decoration: InputDecoration(
+                  hintText: '0',
+                  suffixText: _getUnitLabel(product.unitType),
+                  border: InputBorder.none,
+                ),
+              ),
+            ],
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancelar', style: TextStyle(fontSize: 18, color: Colors.grey)),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: isAdding ? Colors.green : Colors.orange,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              onPressed: () {
+                final qty = double.tryParse(qtyController.text.replaceAll(',', '.'));
+                Navigator.pop(ctx, qty);
+              },
+              child: Text(
+                isAdding ? 'Surtir' : 'Restar', 
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (result != null && result > 0 && mounted) {
+      double newStock = isAdding ? (product.stock + result) : (product.stock - result);
+      
+      // Evitamos que el stock quede en negativo si la merma es enorme
+      if (newStock < 0) newStock = 0;
+
+      final updatedProduct = product.copyWith(stock: newStock);
+      context.read<ProductBloc>().add(UpdateProduct(updatedProduct));
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isAdding 
+                ? '¡Se agregaron ${_formatStock(product.copyWith(stock: result))} al inventario!'
+                : 'Se descontaron ${_formatStock(product.copyWith(stock: result))} por merma.',
+            style: const TextStyle(fontSize: 16),
+          ),
+          backgroundColor: isAdding ? Colors.green : Colors.orange.shade800,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final borderColor = Colors.grey[100]!;
-
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
+        title: const Text('Catálogo de Productos'),
+        centerTitle: true,
         leading: IconButton(
-          icon: Icon(
-            Icons.chevron_left,
-            size: 28,
-            color: Theme.of(context).primaryColor,
-          ),
+          icon: Icon(Icons.chevron_left, size: 36, color: Theme.of(context).primaryColor),
           onPressed: () => context.pop(),
         ),
-        title: const Text(
-          'Productos',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-          ),
-        ),
-        centerTitle: true,
       ),
       body: Column(
         children: [
+          // Buscador + Botón de Escáner Masivos
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
             child: Row(
               children: [
                 Expanded(
                   child: TextField(
                     controller: _searchController,
+                    style: Theme.of(context).textTheme.titleMedium,
                     decoration: InputDecoration(
-                      hintText: 'Nombre, marca, código o clave',
-                      prefixIcon: Icon(
-                        Icons.search,
-                        color: Colors.grey[400],
-                      ),
+                      hintText: 'Nombre, código...',
+                      prefixIcon: const Icon(Icons.search, size: 32),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+                      suffixIcon: _searchController.text.isEmpty
+                          ? null
+                          : IconButton(
+                              onPressed: () => _searchController.clear(),
+                              icon: const Icon(Icons.close, size: 32),
+                              tooltip: 'Limpiar',
+                            ),
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 14),
                 BlocBuilder<ProductBloc, ProductState>(
                   builder: (context, state) {
-                    return Container(
-                      decoration: BoxDecoration(
-                        color: AppTheme.primaryColor.withValues(alpha: 0.05),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: IconButton(
-                        icon: const Icon(
-                          Icons.barcode_reader,
-                          color: AppTheme.primaryColor,
+                    return SizedBox(
+                      width: 68,
+                      height: 68,
+                      child: Material(
+                        color: AppTheme.primaryColor.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(16),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () => _scanQR(state.products),
+                          child: const Icon(
+                            Icons.barcode_reader,
+                            color: AppTheme.primaryColor,
+                            size: 36,
+                          ),
                         ),
-                        onPressed: () => _scanQR(state.products),
-                        padding: const EdgeInsets.all(15),
                       ),
                     );
                   },
@@ -141,45 +266,32 @@ class _ProductListPageState extends State<ProductListPage> {
               ],
             ),
           ),
+          
           Expanded(
             child: BlocConsumer<ProductBloc, ProductState>(
               listener: (context, state) {
-                if (state.status == ProductStatus.success &&
-                    state.message != null) {
+                if (state.status == ProductStatus.success && state.message != null) {
+                  // Lo quitamos para no doble-notificar si fue actualización rápida de stock
+                } else if (state.status == ProductStatus.error && state.message != null) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(state.message!),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
-                } else if (state.status == ProductStatus.error &&
-                    state.message != null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(state.message!),
-                      backgroundColor: Colors.red,
-                    ),
+                    SnackBar(content: Text(state.message!, style: const TextStyle(fontSize: 16)), backgroundColor: Colors.red),
                   );
                 }
               },
               builder: (context, state) {
-                if (state.status == ProductStatus.loading &&
-                    state.products.isEmpty) {
+                if (state.status == ProductStatus.loading && state.products.isEmpty) {
                   return const Center(child: CircularProgressIndicator());
                 }
 
                 if (state.products.isEmpty) {
                   if (state.status == ProductStatus.error) {
-                    return Center(child: Text('Error: ${state.message}'));
+                    return Center(child: Text('Error: ${state.message}', style: Theme.of(context).textTheme.titleLarge));
                   }
-                  return const Center(
-                    child: Text('No hay productos registrados.'),
-                  );
+                  return const EmptyProductsState(hasSearch: false);
                 }
 
                 final filteredProducts = state.products.where((product) {
                   final query = _searchQuery;
-
                   return product.name.toLowerCase().contains(query) ||
                       (product.barcode?.toLowerCase().contains(query) ?? false) ||
                       (product.brand?.toLowerCase().contains(query) ?? false) ||
@@ -187,29 +299,24 @@ class _ProductListPageState extends State<ProductListPage> {
                 }).toList();
 
                 if (filteredProducts.isEmpty) {
-                  return const Center(
-                    child: Text('No hay productos que coincidan.'),
-                  );
+                  return const EmptyProductsState(hasSearch: true);
                 }
 
                 return ListView.separated(
-                  padding: const EdgeInsets.only(
-                    left: 16,
-                    right: 16,
-                    top: 8,
-                    bottom: 100,
-                  ),
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 120), 
                   itemCount: filteredProducts.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  separatorBuilder: (_, __) => const SizedBox(height: 20),
                   itemBuilder: (context, index) {
                     final product = filteredProducts[index];
 
-                    return _ProductCard(
+                    return ProductManagementCard(
                       product: product,
-                      borderColor: borderColor,
-                      currency: _formatCurrency(product.price),
-                      stockInfo:
-                          'Stock: ${_formatStock(product)} ${_getUnitLabel(product.unitType)}',
+                      currencyText: _formatCurrency(product.price),
+                      stockText: 'Stock: ${_formatStock(product)} ${_getUnitLabel(product.unitType)}',
+                      onEdit: () => context.push('/products/edit/${product.id}', extra: product),
+                      onDelete: () => _confirmDelete(product),
+                      onRestock: () => _adjustStock(product, isAdding: true),
+                      onWaste: () => _adjustStock(product, isAdding: false),
                     );
                   },
                 );
@@ -218,258 +325,13 @@ class _ProductListPageState extends State<ProductListPage> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: FloatingActionButton.extended(
         onPressed: () => context.push('/products/barcode-entry'),
         backgroundColor: AppTheme.primaryColor,
         foregroundColor: Colors.white,
-        shape: const CircleBorder(),
-        child: const Icon(Icons.add, size: 32),
+        icon: const Icon(Icons.add, size: 32),
+        label: const Text('Nuevo Producto', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
       ),
-    );
-  }
-}
-
-class _ProductCard extends StatelessWidget {
-  final Product product;
-  final Color borderColor;
-  final String currency;
-  final String stockInfo;
-
-  const _ProductCard({
-    required this.product,
-    required this.borderColor,
-    required this.currency,
-    required this.stockInfo,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: borderColor),
-        boxShadow: const [
-          BoxShadow(
-            color: Colors.black12,
-            blurRadius: 4,
-            offset: Offset(0, 2),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _ProductThumbnail(
-            imageUrl: product.imageUrl,
-            localImagePath: product.localImagePath,
-            width: 64,
-            height: 64,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  product.name,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 16,
-                  ),
-                ),
-                if (product.brand?.isNotEmpty ?? false)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      product.brand!,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ),
-                const SizedBox(height: 4),
-                Text(
-                  currency,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w500,
-                    color: Colors.grey[700],
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  stockInfo,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.grey[600],
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Clave: ${product.internalCode}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  product.barcode != null
-                      ? 'Código: ${product.barcode}'
-                      : 'Sin código de barras',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: product.barcode != null
-                        ? Colors.grey[600]
-                        : Colors.orange[700],
-                    fontWeight: product.barcode != null
-                        ? FontWeight.normal
-                        : FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          _ActionButtons(product: product),
-        ],
-      ),
-    );
-  }
-}
-
-class _ProductThumbnail extends StatelessWidget {
-  final String? imageUrl;
-  final String? localImagePath;
-  final double width;
-  final double height;
-
-  const _ProductThumbnail({
-    required this.imageUrl,
-    required this.localImagePath,
-    this.width = 64,
-    this.height = 64,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (localImagePath != null && localImagePath!.trim().isNotEmpty) {
-      final file = File(localImagePath!);
-
-      if (file.existsSync()) {
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Image.file(
-            file,
-            width: width,
-            height: height,
-            fit: BoxFit.cover,
-          ),
-        );
-      }
-    }
-
-    if (imageUrl != null && imageUrl!.trim().isNotEmpty) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Image.network(
-          imageUrl!,
-          width: width,
-          height: height,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) {
-            return Container(
-              width: width,
-              height: height,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              alignment: Alignment.center,
-              child: Icon(
-                Icons.broken_image_outlined,
-                color: Colors.grey.shade400,
-              ),
-            );
-          },
-        ),
-      );
-    }
-
-    return Container(
-      width: width,
-      height: height,
-      decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      alignment: Alignment.center,
-      child: Icon(
-        Icons.inventory_2_outlined,
-        color: Colors.grey.shade400,
-      ),
-    );
-  }
-}
-
-class _ActionButtons extends StatelessWidget {
-  final Product product;
-
-  const _ActionButtons({
-    required this.product,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        IconButton(
-          icon: const Icon(
-            Icons.edit_rounded,
-            color: AppTheme.primaryColor,
-          ),
-          onPressed: () {
-            context.push('/products/edit/${product.id}', extra: product);
-          },
-        ),
-        IconButton(
-          icon: const Icon(
-            Icons.delete_outline_rounded,
-            color: Colors.red,
-          ),
-          onPressed: () => _confirmDelete(context, product),
-        ),
-      ],
-    );
-  }
-
-  void _confirmDelete(BuildContext context, Product product) {
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('Eliminar'),
-          content: Text('¿Deseas eliminar ${product.name}?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancelar'),
-            ),
-            TextButton(
-              onPressed: () {
-                context.read<ProductBloc>().add(DeleteProduct(product.id));
-                Navigator.pop(ctx);
-              },
-              child: const Text(
-                'Eliminar',
-                style: TextStyle(color: Colors.red),
-              ),
-            ),
-          ],
-        );
-      },
     );
   }
 }

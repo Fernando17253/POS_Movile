@@ -12,6 +12,9 @@ import '../bloc/customer_bloc.dart';
 import '../../../../core/widgets/input_label.dart';
 import '../../../../core/widgets/primary_button.dart';
 
+// Importamos nuestros widgets visuales compartidos
+import '../widgets/customer_widgets.dart';
+
 class RegisterCustomerPaymentPage extends StatefulWidget {
   final Customer customer;
 
@@ -21,12 +24,10 @@ class RegisterCustomerPaymentPage extends StatefulWidget {
   });
 
   @override
-  State<RegisterCustomerPaymentPage> createState() =>
-      _RegisterCustomerPaymentPageState();
+  State<RegisterCustomerPaymentPage> createState() => _RegisterCustomerPaymentPageState();
 }
 
-class _RegisterCustomerPaymentPageState
-    extends State<RegisterCustomerPaymentPage> {
+class _RegisterCustomerPaymentPageState extends State<RegisterCustomerPaymentPage> {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _amountController = TextEditingController();
   final TextEditingController _referenceController = TextEditingController();
@@ -43,6 +44,7 @@ class _RegisterCustomerPaymentPageState
     super.dispose();
   }
 
+  // --- LÓGICA DE NEGOCIO (MANTENIDA INTACTA) ---
   String _formatCurrency(double value) {
     return '\$${value.toStringAsFixed(2)} MXN';
   }
@@ -62,8 +64,7 @@ class _RegisterCustomerPaymentPageState
 
   bool _willSettle() {
     if (widget.customer.currentBalance <= 0) return false;
-    return _currentAmountValue() >= widget.customer.currentBalance &&
-        _currentAmountValue() > 0;
+    return _currentAmountValue() >= widget.customer.currentBalance && _currentAmountValue() > 0;
   }
 
   String _movementPreviewLabel() {
@@ -71,40 +72,22 @@ class _RegisterCustomerPaymentPageState
   }
 
   String? _amountValidator(String? value) {
-    if (value == null || value.trim().isEmpty) {
-      return 'Ingresa el monto';
-    }
-
+    if (value == null || value.trim().isEmpty) return 'Ingresa el monto';
     final parsed = double.tryParse(value.trim().replaceAll(',', '.'));
-    if (parsed == null) {
-      return 'Ingresa un número válido';
-    }
-
-    if (parsed <= 0) {
-      return 'El monto debe ser mayor a 0';
-    }
-
-    if (widget.customer.currentBalance <= 0) {
-      return 'Este cliente no tiene saldo pendiente';
-    }
-
-    if (parsed > widget.customer.currentBalance) {
-      return 'El monto no puede ser mayor al saldo pendiente';
-    }
-
+    if (parsed == null) return 'Ingresa un número válido';
+    if (parsed <= 0) return 'El monto debe ser mayor a 0';
+    if (widget.customer.currentBalance <= 0) return 'Este cliente no tiene saldo pendiente';
+    if (parsed > widget.customer.currentBalance) return 'El monto no puede ser mayor al saldo pendiente';
     return null;
   }
 
   Future<CustomerDebtCycle?> _getOrCreateOpenDebtCycle() async {
-    final openCycleResult =
-        await _customerRepository.getOpenDebtCycle(widget.customer.id);
+    final openCycleResult = await _customerRepository.getOpenDebtCycle(widget.customer.id);
 
     return await openCycleResult.fold(
       (_) async => null,
       (existingCycle) async {
-        if (existingCycle != null) {
-          return existingCycle;
-        }
+        if (existingCycle != null) return existingCycle;
 
         final recoveryCycle = CustomerDebtCycle(
           id: DateTime.now().microsecondsSinceEpoch.toString(),
@@ -121,11 +104,7 @@ class _RegisterCustomerPaymentPageState
         );
 
         final saveResult = await _customerRepository.saveDebtCycle(recoveryCycle);
-
-        return saveResult.fold(
-          (_) => null,
-          (_) => recoveryCycle,
-        );
+        return saveResult.fold((_) => null, (_) => recoveryCycle);
       },
     );
   }
@@ -137,42 +116,29 @@ class _RegisterCustomerPaymentPageState
 
     if (widget.customer.currentBalance <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Este cliente no tiene adeudo pendiente.'),
-          backgroundColor: Colors.red,
-        ),
+        const SnackBar(content: Text('Este cliente no tiene adeudo pendiente.'), backgroundColor: Colors.red),
       );
       return;
     }
 
     final amount = _parseDouble(_amountController.text);
-    final reference = _referenceController.text.trim().isEmpty
-        ? null
-        : _referenceController.text.trim();
+    final reference = _referenceController.text.trim().isEmpty ? null : _referenceController.text.trim();
 
     final newBalance = widget.customer.currentBalance - amount;
     final normalizedBalance = newBalance < 0 ? 0.0 : newBalance;
     final isSettlement = normalizedBalance <= 0;
     final now = DateTime.now();
 
-    setState(() {
-      _isSaving = true;
-    });
+    setState(() => _isSaving = true);
 
     final openCycle = await _getOrCreateOpenDebtCycle();
 
     if (!mounted) return;
 
     if (openCycle == null) {
-      setState(() {
-        _isSaving = false;
-      });
-
+      setState(() => _isSaving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No se pudo crear o recuperar el ciclo de adeudo.'),
-          backgroundColor: Colors.red,
-        ),
+        const SnackBar(content: Text('No se pudo crear o recuperar el ciclo de adeudo.'), backgroundColor: Colors.red),
       );
       return;
     }
@@ -183,9 +149,7 @@ class _RegisterCustomerPaymentPageState
       debtCycleId: openCycle.id,
       type: isSettlement ? 'settlement' : 'payment',
       createdAt: now,
-      description: isSettlement
-          ? 'Liquidación de adeudo'
-          : 'Abono registrado',
+      description: isSettlement ? 'Liquidación de adeudo' : 'Abono registrado',
       amount: amount,
       balanceAfter: normalizedBalance,
       relatedSaleId: null,
@@ -205,16 +169,8 @@ class _RegisterCustomerPaymentPageState
 
     await ledgerResult.fold(
       (failure) async {
-        setState(() {
-          _isSaving = false;
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(failure.message),
-            backgroundColor: Colors.red,
-          ),
-        );
+        setState(() => _isSaving = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(failure.message), backgroundColor: Colors.red));
       },
       (_) async {
         final updatedCycle = openCycle.copyWith(
@@ -233,36 +189,16 @@ class _RegisterCustomerPaymentPageState
 
         cycleResult.fold(
           (failure) {
-            setState(() {
-              _isSaving = false;
-            });
-
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'El abono se guardó, pero no se pudo actualizar el ciclo: ${failure.message}',
-                ),
-                backgroundColor: Colors.orange,
-              ),
-            );
-
+            setState(() => _isSaving = false);
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('El abono se guardó, pero falló el ciclo: ${failure.message}'), backgroundColor: Colors.orange));
             context.read<CustomerBloc>().add(const LoadCustomers());
-            context.read<CustomerBloc>().add(
-                  LoadCustomerDetailData(widget.customer.id),
-                );
-
+            context.read<CustomerBloc>().add(LoadCustomerDetailData(widget.customer.id));
             context.pop(true);
           },
           (_) {
-            setState(() {
-              _isSaving = false;
-            });
-
+            setState(() => _isSaving = false);
             context.read<CustomerBloc>().add(const LoadCustomers());
-            context.read<CustomerBloc>().add(
-                  LoadCustomerDetailData(widget.customer.id),
-                );
-
+            context.read<CustomerBloc>().add(LoadCustomerDetailData(widget.customer.id));
             context.pop(true);
           },
         );
@@ -270,14 +206,22 @@ class _RegisterCustomerPaymentPageState
     );
   }
 
+  // --- INTERFAZ REFACTORIZADA ---
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final customer = widget.customer;
+    final isSettlement = _willSettle();
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Registrar abono'),
         centerTitle: true,
+        leading: IconButton(
+          icon: Icon(Icons.chevron_left, size: 32, color: theme.primaryColor),
+          onPressed: () => context.pop(),
+        ),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -287,85 +231,128 @@ class _RegisterCustomerPaymentPageState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _CustomerPaymentHeader(
-                  customerName: customer.name,
-                  balanceText: _formatCurrency(customer.currentBalance),
-                  nextBalanceText: _formatCurrency(_balanceAfterPreview()),
-                  movementLabel: _movementPreviewLabel(),
+                
+                // --- TARJETA DE RESUMEN DEL CLIENTE ---
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0xFFE5E5EA)),
+                    boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(customer.name, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 16),
+                      Wrap(
+                        spacing: 12, runSpacing: 12,
+                        children: [
+                          CustomerInfoCard(
+                            label: 'Saldo pendiente',
+                            value: _formatCurrency(customer.currentBalance),
+                            accentColor: Colors.red,
+                          ),
+                          CustomerInfoCard(
+                            label: 'Saldo después',
+                            value: _formatCurrency(_balanceAfterPreview()),
+                            accentColor: isSettlement ? Colors.green : Colors.blue,
+                          ),
+                          CustomerInfoCard(
+                            label: 'Movimiento',
+                            value: _movementPreviewLabel(),
+                            accentColor: isSettlement ? Colors.green : Colors.blue,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 20),
+                
+                const SizedBox(height: 32),
+                
+                // --- INPUT DEL MONTO GIGANTE ---
                 const InputLabel(text: 'Monto a pagar'),
                 TextFormField(
                   controller: _amountController,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   textInputAction: TextInputAction.next,
                   onChanged: (_) => setState(() {}),
                   validator: _amountValidator,
+                  style: theme.textTheme.displayMedium, // Texto gigante para no equivocarse
                   decoration: const InputDecoration(
                     prefixText: '\$ ',
                     hintText: '0.00',
                   ),
                 ),
-                const SizedBox(height: 20),
+                
+                const SizedBox(height: 24),
+                
+                // --- SELECTOR DE MÉTODO DE PAGO ---
                 const InputLabel(text: 'Método de pago'),
                 DropdownButtonFormField<String>(
                   value: _paymentMethod,
+                  icon: const Icon(Icons.keyboard_arrow_down, size: 28), // Ícono más grande
+                  style: theme.textTheme.bodyLarge, // Texto más grande en el dropdown
                   items: const [
-                    DropdownMenuItem(
-                      value: 'cash',
-                      child: Text('Efectivo'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'transfer',
-                      child: Text('Transferencia'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'point',
-                      child: Text('Tarjeta / Point'),
-                    ),
+                    DropdownMenuItem(value: 'cash', child: Text('Efectivo')),
+                    DropdownMenuItem(value: 'transfer', child: Text('Transferencia')),
+                    DropdownMenuItem(value: 'point', child: Text('Tarjeta / Point')),
                   ],
                   onChanged: (value) {
                     if (value == null) return;
                     setState(() {
                       _paymentMethod = value;
-                      if (_paymentMethod != 'transfer') {
-                        _referenceController.clear();
-                      }
+                      if (_paymentMethod != 'transfer') _referenceController.clear();
                     });
                   },
-                  decoration: const InputDecoration(
-                    hintText: 'Selecciona método',
-                  ),
+                  decoration: const InputDecoration(hintText: 'Selecciona método'),
                 ),
+                
                 if (_paymentMethod == 'transfer') ...[
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 24),
                   const InputLabel(text: 'Referencia (opcional)'),
                   TextFormField(
                     controller: _referenceController,
                     textInputAction: TextInputAction.done,
-                    decoration: const InputDecoration(
-                      hintText: 'Ej. Folio o referencia',
-                    ),
+                    style: theme.textTheme.bodyLarge,
+                    decoration: const InputDecoration(hintText: 'Ej. Folio o número de rastreo'),
                   ),
                 ],
-                const SizedBox(height: 14),
+                
+                const SizedBox(height: 24),
+                
+                // --- CUADRO DE AVISO DINÁMICO ---
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: Colors.blue.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(12),
+                    color: isSettlement ? Colors.green.withValues(alpha: 0.1) : Colors.blue.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: isSettlement ? Colors.green.withValues(alpha: 0.3) : Colors.blue.withValues(alpha: 0.3)),
                   ),
-                  child: Text(
-                    _willSettle()
-                        ? 'Este movimiento liquidará por completo el adeudo del cliente.'
-                        : 'Este movimiento registrará un abono y reducirá el saldo pendiente del cliente.',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      height: 1.4,
-                    ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isSettlement ? Icons.check_circle_outline : Icons.info_outline_rounded,
+                        color: isSettlement ? Colors.green.shade800 : Colors.blue.shade800,
+                        size: 32,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          isSettlement
+                              ? 'Este movimiento liquidará por completo el adeudo del cliente. ¡Excelente!'
+                              : 'Este movimiento registrará un abono y reducirá el saldo pendiente del cliente.',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: isSettlement ? Colors.green.shade900 : Colors.blue.shade900,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -373,140 +360,17 @@ class _RegisterCustomerPaymentPageState
           ),
         ),
       ),
-      bottomNavigationBar: PrimaryButton(
-        onPressed: _isSaving ? null : _submit,
-        icon: _isSaving ? Icons.hourglass_top : Icons.payments_outlined,
-        label: _isSaving ? 'Guardando abono...' : 'Guardar abono',
-        isLoading: _isSaving,
-      ),
-    );
-  }
-}
-
-class _CustomerPaymentHeader extends StatelessWidget {
-  final String customerName;
-  final String balanceText;
-  final String nextBalanceText;
-  final String movementLabel;
-
-  const _CustomerPaymentHeader({
-    required this.customerName,
-    required this.balanceText,
-    required this.nextBalanceText,
-    required this.movementLabel,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isSettlement = movementLabel == 'Liquidación';
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE5E5EA)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            customerName,
-            style: const TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              _PaymentInfoCard(
-                label: 'Saldo pendiente',
-                value: balanceText,
-                foreground: const Color(0xFFDC2626),
-                background: const Color(0xFFFFF1F2),
-              ),
-              _PaymentInfoCard(
-                label: 'Saldo después',
-                value: nextBalanceText,
-                foreground: isSettlement
-                    ? const Color(0xFF15803D)
-                    : const Color(0xFF1D4ED8),
-                background: isSettlement
-                    ? const Color(0xFFF0FDF4)
-                    : const Color(0xFFEFF6FF),
-              ),
-              _PaymentInfoCard(
-                label: 'Movimiento',
-                value: movementLabel,
-                foreground: isSettlement
-                    ? const Color(0xFF15803D)
-                    : const Color(0xFF1D4ED8),
-                background: isSettlement
-                    ? const Color(0xFFF0FDF4)
-                    : const Color(0xFFEFF6FF),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PaymentInfoCard extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color foreground;
-  final Color background;
-
-  const _PaymentInfoCard({
-    required this.label,
-    required this.value,
-    required this.foreground,
-    required this.background,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label.toUpperCase(),
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              color: foreground.withValues(alpha: 0.8),
-              letterSpacing: 0.5,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
-              color: foreground,
-            ),
-          ),
-        ],
+      bottomNavigationBar: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: theme.scaffoldBackgroundColor,
+        ),
+        child: PrimaryButton(
+          onPressed: _isSaving ? null : _submit,
+          icon: _isSaving ? Icons.hourglass_top : Icons.payments_outlined,
+          label: _isSaving ? 'Guardando abono...' : 'Guardar Abono',
+          isLoading: _isSaving,
+        ),
       ),
     );
   }

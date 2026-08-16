@@ -79,6 +79,8 @@ class _UpsertCustomerPageState extends State<UpsertCustomerPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return BlocListener<CustomerBloc, CustomerState>(
       listenWhen: (previous, current) =>
           previous.status != current.status ||
@@ -101,6 +103,14 @@ class _UpsertCustomerPageState extends State<UpsertCustomerPage> {
         appBar: AppBar(
           title: Text(_isEdit ? 'Editar cliente' : 'Agregar cliente'),
           centerTitle: true,
+          leading: IconButton(
+            icon: Icon(
+              Icons.chevron_left,
+              size: 32,
+              color: theme.primaryColor,
+            ),
+            onPressed: () => context.pop(),
+          ),
         ),
         body: SafeArea(
           child: SingleChildScrollView(
@@ -114,6 +124,7 @@ class _UpsertCustomerPageState extends State<UpsertCustomerPage> {
                   TextFormField(
                     controller: _nameController,
                     textCapitalization: TextCapitalization.words,
+                    style: theme.textTheme.titleMedium,
                     validator: AppValidators.required(
                       'Ingresa el nombre del cliente',
                     ),
@@ -122,20 +133,24 @@ class _UpsertCustomerPageState extends State<UpsertCustomerPage> {
                     ),
                   ),
                   const SizedBox(height: 24),
+                  
                   const InputLabel(text: 'Teléfono (opcional)'),
                   TextFormField(
                     controller: _phoneController,
                     keyboardType: TextInputType.phone,
+                    style: theme.textTheme.titleMedium,
                     decoration: const InputDecoration(
                       hintText: 'Ej. 9611234567',
                     ),
                   ),
                   const SizedBox(height: 24),
+                  
                   const InputLabel(text: 'Notas (opcional)'),
                   TextFormField(
                     controller: _notesController,
                     maxLines: 4,
                     textCapitalization: TextCapitalization.sentences,
+                    style: theme.textTheme.bodyLarge,
                     decoration: const InputDecoration(
                       hintText: 'Ej. Paga cada fin de semana',
                     ),
@@ -145,21 +160,27 @@ class _UpsertCustomerPageState extends State<UpsertCustomerPage> {
             ),
           ),
         ),
-        bottomNavigationBar: BlocBuilder<CustomerBloc, CustomerState>(
-          builder: (context, state) {
-            final isLoading = state.status == CustomerStatus.loading;
+        bottomNavigationBar: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: theme.scaffoldBackgroundColor,
+          ),
+          child: BlocBuilder<CustomerBloc, CustomerState>(
+            builder: (context, state) {
+              final isLoading = state.status == CustomerStatus.loading;
 
-            return PrimaryButton(
-              onPressed: isLoading ? null : _submit,
-              icon: isLoading
-                  ? Icons.hourglass_top
-                  : (_isEdit ? Icons.save : Icons.person_add_alt_1),
-              label: isLoading
-                  ? 'Guardando...'
-                  : (_isEdit ? 'Guardar cambios' : 'Guardar cliente'),
-              isLoading: isLoading,
-            );
-          },
+              return PrimaryButton(
+                onPressed: isLoading ? null : _submit,
+                icon: isLoading
+                    ? Icons.hourglass_top
+                    : (_isEdit ? Icons.save : Icons.person_add_alt_1),
+                label: isLoading
+                    ? 'Guardando...'
+                    : (_isEdit ? 'Guardar Cambios' : 'Guardar Cliente'),
+                isLoading: isLoading,
+              );
+            },
+          ),
         ),
       ),
     );

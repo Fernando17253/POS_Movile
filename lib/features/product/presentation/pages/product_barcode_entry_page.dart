@@ -14,8 +14,7 @@ class ProductBarcodeEntryPage extends StatefulWidget {
   const ProductBarcodeEntryPage({super.key});
 
   @override
-  State<ProductBarcodeEntryPage> createState() =>
-      _ProductBarcodeEntryPageState();
+  State<ProductBarcodeEntryPage> createState() => _ProductBarcodeEntryPageState();
 }
 
 class _ProductBarcodeEntryPageState extends State<ProductBarcodeEntryPage> {
@@ -49,8 +48,7 @@ class _ProductBarcodeEntryPageState extends State<ProductBarcodeEntryPage> {
 
     Product? existingProduct;
     try {
-      existingProduct =
-          productState.products.firstWhere((p) => p.barcode == barcode);
+      existingProduct = productState.products.firstWhere((p) => p.barcode == barcode);
     } catch (_) {
       existingProduct = null;
     }
@@ -130,14 +128,15 @@ class _ProductBarcodeEntryPageState extends State<ProductBarcodeEntryPage> {
       context: context,
       builder: (innerContext) {
         return AlertDialog(
-          title: const Text('Producto ya registrado'),
+          title: const Text('Producto ya registrado', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
           content: Text(
             'El código de barras ya pertenece a "${product.name}".',
+            style: const TextStyle(fontSize: 18),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(innerContext),
-              child: const Text('Cerrar'),
+              child: const Text('Cerrar', style: TextStyle(fontSize: 18)),
             ),
             TextButton(
               onPressed: () {
@@ -147,7 +146,7 @@ class _ProductBarcodeEntryPageState extends State<ProductBarcodeEntryPage> {
                   extra: product,
                 );
               },
-              child: const Text('Editar producto'),
+              child: const Text('Editar producto', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ),
           ],
         );
@@ -157,10 +156,16 @@ class _ProductBarcodeEntryPageState extends State<ProductBarcodeEntryPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Agregar producto'),
         centerTitle: true,
+        leading: IconButton(
+          icon: Icon(Icons.chevron_left, size: 36, color: theme.primaryColor), // Ícono gigante
+          onPressed: () => context.pop(),
+        ),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -170,45 +175,52 @@ class _ProductBarcodeEntryPageState extends State<ProductBarcodeEntryPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Tarjeta de Información Más Grande y Legible
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(24),
                   decoration: BoxDecoration(
-                    color: AppTheme.primaryColor.withValues(alpha: 0.05),
-                    borderRadius: BorderRadius.circular(16),
+                    color: AppTheme.primaryColor.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(18),
                     border: Border.all(
-                      color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                      color: AppTheme.primaryColor.withValues(alpha: 0.2),
+                      width: 2,
                     ),
                   ),
-                  child: const Column(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         '¿Cómo quieres registrar el producto?',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 15,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: AppTheme.primaryColor,
                         ),
                       ),
-                      SizedBox(height: 8),
+                      const SizedBox(height: 12),
                       Text(
-                        '• Si el producto tiene código de barras, escanéalo o escríbelo.\n'
-                        '• Si no tiene código, puedes registrarlo manualmente.\n'
+                        '• Si el producto tiene código de barras, escanéalo o escríbelo.\n\n'
+                        '• Si no tiene código, puedes registrarlo manualmente usando el botón de abajo.\n\n'
                         '• Si ya existe en tu catálogo, podrás editarlo.',
-                        style: TextStyle(height: 1.4),
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          color: Colors.black87,
+                          height: 1.4,
+                        ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 32),
 
                 const InputLabel(text: 'Código de barras'),
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
                       child: TextFormField(
                         controller: _barcodeController,
                         keyboardType: TextInputType.number,
+                        style: theme.textTheme.titleLarge, // Texto inmenso al escribir el código
                         decoration: const InputDecoration(
                           hintText: 'Escanea o escribe el código',
                         ),
@@ -217,47 +229,66 @@ class _ProductBarcodeEntryPageState extends State<ProductBarcodeEntryPage> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 14),
+                    // Botón de Escáner Gigante
                     Container(
+                      width: 68,
+                      height: 68,
                       decoration: BoxDecoration(
                         color: AppTheme.primaryColor.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(16),
                       ),
                       child: IconButton(
                         icon: const Icon(
                           Icons.barcode_reader,
                           color: AppTheme.primaryColor,
+                          size: 36,
                         ),
                         onPressed: _scanBarcode,
-                        padding: const EdgeInsets.all(14),
+                        tooltip: 'Abrir cámara',
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                const Text(
+                const SizedBox(height: 12),
+                Text(
                   'Toca el ícono para abrir el escáner y leer el código.',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF4C669A),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: Colors.grey[700],
                   ),
                 ),
-                const SizedBox(height: 24),
+                
+                const SizedBox(height: 48),
 
-                OutlinedButton.icon(
-                  onPressed: _isLoading ? null : _goToManualWithoutBarcode,
-                  icon: const Icon(Icons.inventory_2_outlined),
-                  label: const Text('Agregar producto sin código de barras'),
+                // Botón Auxiliar Grande
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _isLoading ? null : _goToManualWithoutBarcode,
+                    icon: const Icon(Icons.inventory_2_outlined, size: 28),
+                    label: const Text('Agregar producto sin código', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 20),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
         ),
       ),
-      bottomNavigationBar: PrimaryButton(
-        onPressed: _isLoading ? null : _continueFlow,
-        icon: _isLoading ? Icons.hourglass_top : Icons.arrow_forward_rounded,
-        label: _isLoading ? 'Consultando...' : 'Continuar',
+      bottomNavigationBar: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: theme.scaffoldBackgroundColor,
+        ),
+        child: PrimaryButton(
+          onPressed: _isLoading ? null : _continueFlow,
+          icon: _isLoading ? Icons.hourglass_top : Icons.arrow_forward_rounded,
+          label: _isLoading ? 'Consultando catálogo...' : 'Continuar',
+          isLoading: _isLoading,
+        ),
       ),
     );
   }

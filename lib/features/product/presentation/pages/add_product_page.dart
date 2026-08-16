@@ -75,18 +75,10 @@ class _AddProductPageState extends State<AddProductPage> {
 
     _withoutBarcode = widget.withoutBarcode;
 
-    _barcodeController = TextEditingController(
-      text: widget.initialBarcode ?? '',
-    );
-    _internalCodeController = TextEditingController(
-      text: widget.initialInternalCode ?? '',
-    );
-    _nameController = TextEditingController(
-      text: widget.initialName ?? '',
-    );
-    _brandController = TextEditingController(
-      text: widget.initialBrand ?? '',
-    );
+    _barcodeController = TextEditingController(text: widget.initialBarcode ?? '');
+    _internalCodeController = TextEditingController(text: widget.initialInternalCode ?? '');
+    _nameController = TextEditingController(text: widget.initialName ?? '');
+    _brandController = TextEditingController(text: widget.initialBrand ?? '');
     _priceController = TextEditingController();
     _costController = TextEditingController();
     _stockController = TextEditingController();
@@ -127,35 +119,18 @@ class _AddProductPageState extends State<AddProductPage> {
   }
 
   String? _requiredNumberValidator(String? value, String message) {
-    if (value == null || value.trim().isEmpty) {
-      return message;
-    }
-
+    if (value == null || value.trim().isEmpty) return message;
     final parsed = double.tryParse(value.trim().replaceAll(',', '.'));
-    if (parsed == null) {
-      return 'Ingresa un número válido';
-    }
-
-    if (parsed < 0) {
-      return 'El valor no puede ser negativo';
-    }
-
+    if (parsed == null) return 'Ingresa un número válido';
+    if (parsed < 0) return 'El valor no puede ser negativo';
     return null;
   }
 
   String _sanitizeInternalCode(String value) {
-    return value
-        .trim()
-        .toUpperCase()
-        .replaceAll(' ', '-')
-        .replaceAll(RegExp(r'[^A-Z0-9\-_]'), '');
+    return value.trim().toUpperCase().replaceAll(' ', '-').replaceAll(RegExp(r'[^A-Z0-9\-_]'), '');
   }
 
-  String _generateInternalCode({
-    required String name,
-    String? barcode,
-    String? manualCode,
-  }) {
+  String _generateInternalCode({required String name, String? barcode, String? manualCode}) {
     final sanitizedManual = _sanitizeInternalCode(manualCode ?? '');
     if (sanitizedManual.isNotEmpty) return sanitizedManual;
 
@@ -164,9 +139,7 @@ class _AddProductPageState extends State<AddProductPage> {
 
     final sanitizedName = _sanitizeInternalCode(name);
     if (sanitizedName.isNotEmpty) {
-      final shortName = sanitizedName.length > 12
-          ? sanitizedName.substring(0, 12)
-          : sanitizedName;
+      final shortName = sanitizedName.length > 12 ? sanitizedName.substring(0, 12) : sanitizedName;
       final suffix = const Uuid().v4().substring(0, 4).toUpperCase();
       return '$shortName-$suffix';
     }
@@ -177,20 +150,13 @@ class _AddProductPageState extends State<AddProductPage> {
 
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-      ),
+      SnackBar(content: Text(message, style: const TextStyle(fontSize: 16)), backgroundColor: Colors.red),
     );
   }
 
   Future<void> _pickImage(ImageSource source) async {
     try {
-      final pickedFile = await _imagePicker.pickImage(
-        source: source,
-        imageQuality: 90,
-      );
-
+      final pickedFile = await _imagePicker.pickImage(source: source, imageQuality: 90);
       if (pickedFile == null) return;
 
       setState(() {
@@ -205,51 +171,51 @@ class _AddProductPageState extends State<AddProductPage> {
   Future<void> _showImageSourceSheet() async {
     await showModalBottomSheet<void>(
       context: context,
+      backgroundColor: Colors.white, // Fondo blanco sólido para que las opciones sean legibles
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (sheetContext) {
-        final hasAnyImage = _selectedImageFile != null ||
-            (!_removeDetectedImage &&
-                widget.initialImageUrl != null &&
-                widget.initialImageUrl!.isNotEmpty);
+        final hasAnyImage = _selectedImageFile != null || (!_removeDetectedImage && widget.initialImageUrl != null && widget.initialImageUrl!.isNotEmpty);
 
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.photo_camera_outlined),
-                title: const Text('Tomar foto'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _pickImage(ImageSource.camera);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.photo_library_outlined),
-                title: const Text('Elegir de galería'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _pickImage(ImageSource.gallery);
-                },
-              ),
-              if (hasAnyImage)
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(width: 48, height: 6, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10))),
+                const SizedBox(height: 16),
                 ListTile(
-                  leading: const Icon(
-                    Icons.delete_outline,
-                    color: Colors.red,
-                  ),
-                  title: const Text(
-                    'Quitar imagen',
-                    style: TextStyle(color: Colors.red),
-                  ),
+                  leading: const Icon(Icons.photo_camera_outlined, size: 32),
+                  title: const Text('Tomar foto', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   onTap: () {
                     Navigator.pop(sheetContext);
-                    setState(() {
-                      _selectedImageFile = null;
-                      _removeDetectedImage = true;
-                    });
+                    _pickImage(ImageSource.camera);
                   },
                 ),
-            ],
+                ListTile(
+                  leading: const Icon(Icons.photo_library_outlined, size: 32),
+                  title: const Text('Elegir de galería', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _pickImage(ImageSource.gallery);
+                  },
+                ),
+                if (hasAnyImage) ...[
+                  const Divider(),
+                  ListTile(
+                    leading: const Icon(Icons.delete_outline, color: Colors.red, size: 32),
+                    title: const Text('Quitar imagen', style: TextStyle(color: Colors.red, fontSize: 18, fontWeight: FontWeight.bold)),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      setState(() {
+                        _selectedImageFile = null;
+                        _removeDetectedImage = true;
+                      });
+                    },
+                  ),
+                ],
+              ],
+            ),
           ),
         );
       },
@@ -269,55 +235,34 @@ class _AddProductPageState extends State<AddProductPage> {
     final stock = _parseDouble(_stockController.text);
     final minStock = _parseDouble(_minStockController.text);
 
-    final internalCode = _generateInternalCode(
-      name: name,
-      barcode: barcode,
-      manualCode: _internalCodeController.text,
-    );
-
+    final internalCode = _generateInternalCode(name: name, barcode: barcode, manualCode: _internalCodeController.text);
     final productState = context.read<ProductBloc>().state;
 
     if (barcode != null) {
-      final duplicatedBarcode =
-          productState.products.any((p) => p.barcode == barcode);
-
+      final duplicatedBarcode = productState.products.any((p) => p.barcode == barcode);
       if (duplicatedBarcode) {
         _showError('Ya existe un producto con este código de barras.');
         return;
       }
     }
 
-    final duplicatedInternalCode = productState.products.any(
-      (p) => p.internalCode.toUpperCase() == internalCode.toUpperCase(),
-    );
-
+    final duplicatedInternalCode = productState.products.any((p) => p.internalCode.toUpperCase() == internalCode.toUpperCase());
     if (duplicatedInternalCode) {
       _showError('Ya existe un producto con ese identificador interno.');
       return;
     }
 
-    setState(() {
-      _isSavingImage = true;
-    });
+    setState(() => _isSavingImage = true);
 
     final productId = const Uuid().v4();
-
     String? localImagePath;
     String? finalImageUrl;
 
     if (_selectedImageFile != null) {
-      localImagePath = await ProductImageService().saveFileImageLocally(
-        sourceFile: _selectedImageFile!,
-        productId: productId,
-      );
+      localImagePath = await ProductImageService().saveFileImageLocally(sourceFile: _selectedImageFile!, productId: productId);
       finalImageUrl = null;
-    } else if (!_removeDetectedImage &&
-        widget.initialImageUrl != null &&
-        widget.initialImageUrl!.isNotEmpty) {
-      localImagePath = await ProductImageService().saveNetworkImageLocally(
-        imageUrl: widget.initialImageUrl!,
-        productId: productId,
-      );
+    } else if (!_removeDetectedImage && widget.initialImageUrl != null && widget.initialImageUrl!.isNotEmpty) {
+      localImagePath = await ProductImageService().saveNetworkImageLocally(imageUrl: widget.initialImageUrl!, productId: productId);
       finalImageUrl = widget.initialImageUrl;
     } else {
       localImagePath = null;
@@ -346,37 +291,23 @@ class _AddProductPageState extends State<AddProductPage> {
 
     context.read<ProductBloc>().add(AddProduct(product));
 
-    setState(() {
-      _isSavingImage = false;
-    });
-
+    setState(() => _isSavingImage = false);
     context.pop();
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final fromApi = widget.source == 'open_food_facts';
 
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
+        title: const Text('Agregar producto'),
+        centerTitle: true,
         leading: IconButton(
-          icon: Icon(
-            Icons.chevron_left,
-            size: 28,
-            color: Theme.of(context).primaryColor,
-          ),
+          icon: Icon(Icons.chevron_left, size: 36, color: theme.primaryColor),
           onPressed: () => context.pop(),
         ),
-        title: const Text(
-          'Agregar producto',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-          ),
-        ),
-        centerTitle: true,
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -389,274 +320,277 @@ class _AddProductPageState extends State<AddProductPage> {
                 if (fromApi) ...[
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(14),
+                    padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
                       color: AppTheme.primaryColor.withValues(alpha: 0.06),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: AppTheme.primaryColor.withValues(alpha: 0.12),
-                      ),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.12)),
                     ),
-                    child: const Text(
-                      'Se detectaron datos del producto. Completa la información faltante antes de guardarlo.',
-                      style: TextStyle(height: 1.4),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                ],
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Producto sin código de barras'),
-                  subtitle: const Text(
-                    'Actívalo para frutas, verduras, queso u otros productos sin código.',
-                  ),
-                  value: _withoutBarcode,
-                  onChanged: (value) {
-                    setState(() {
-                      _withoutBarcode = value;
-                      if (value) {
-                        _barcodeController.clear();
-                      }
-                    });
-                  },
-                ),
-                const SizedBox(height: 16),
-                if (!_withoutBarcode) ...[
-                  const InputLabel(text: 'Código de barras'),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          controller: _barcodeController,
-                          decoration: const InputDecoration(
-                            hintText: 'Escanea o escribe el código',
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.info_outline, color: AppTheme.primaryColor, size: 28),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Se detectaron datos del producto. Completa la información faltante antes de guardarlo.',
+                            style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold, color: AppTheme.primaryColor),
                           ),
-                          validator: _withoutBarcode
-                              ? null
-                              : AppValidators.required(
-                                  'Ingresa un código de barras',
-                                ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: AppTheme.primaryColor.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: IconButton(
-                          icon: const Icon(
-                            Icons.barcode_reader,
-                            color: AppTheme.primaryColor,
-                          ),
-                          onPressed: _scanBarcode,
-                          padding: const EdgeInsets.all(14),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Toca el ícono para abrir el escáner.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFF4C669A),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 24),
                 ],
+                
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('Sin código de barras', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                  subtitle: Text('Actívalo para productos elaborados, frutas o productos sueltos.', style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey[700])),
+                  value: _withoutBarcode,
+                  activeColor: AppTheme.primaryColor,
+                  onChanged: (value) {
+                    setState(() {
+                      _withoutBarcode = value;
+                      if (value) _barcodeController.clear();
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+
+                if (!_withoutBarcode) ...[
+                  const InputLabel(text: 'Código de barras'),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: _barcodeController,
+                          keyboardType: TextInputType.number,
+                          style: theme.textTheme.titleLarge, // Texto enorme para el código
+                          decoration: const InputDecoration(hintText: 'Escanea o escribe el código'),
+                          validator: _withoutBarcode ? null : AppValidators.required('Ingresa un código de barras'),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Container(
+                        width: 68, height: 68,
+                        decoration: BoxDecoration(color: AppTheme.primaryColor.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(16)),
+                        child: IconButton(
+                          icon: const Icon(Icons.barcode_reader, color: AppTheme.primaryColor, size: 36),
+                          onPressed: _scanBarcode,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text('Toca el ícono para escanear usando la cámara.', style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey[600])),
+                  const SizedBox(height: 24),
+                ],
+
                 const InputLabel(text: 'Identificador interno'),
                 TextFormField(
                   controller: _internalCodeController,
-                  decoration: const InputDecoration(
-                    hintText: 'Ej. QUESO-OAX, JITOMATE-KG o PROD-001',
-                  ),
+                  style: theme.textTheme.titleMedium,
+                  decoration: const InputDecoration(hintText: 'Ej. QUESO-OAX, PROD-001'),
                 ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Si lo dejas vacío, el sistema lo generará automáticamente.',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF4C669A),
-                  ),
-                ),
+                const SizedBox(height: 8),
+                Text('Si lo dejas vacío, el sistema lo generará automáticamente.', style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey[600])),
                 const SizedBox(height: 24),
+
                 const InputLabel(text: 'Nombre del producto'),
                 TextFormField(
                   controller: _nameController,
                   textCapitalization: TextCapitalization.words,
-                  validator: AppValidators.required(
-                    'Ingresa el nombre del producto',
-                  ),
-                  decoration: const InputDecoration(
-                    hintText: 'Ej. Jitomate, Queso Oaxaca, Coca-Cola',
-                  ),
+                  style: theme.textTheme.titleMedium,
+                  validator: AppValidators.required('Ingresa el nombre del producto'),
+                  decoration: const InputDecoration(hintText: 'Ej. Jitomate, Queso Oaxaca, Coca-Cola'),
                 ),
                 const SizedBox(height: 24),
+
                 const InputLabel(text: 'Marca (opcional)'),
                 TextFormField(
                   controller: _brandController,
                   textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(
-                    hintText: 'Ej. Coca-Cola, Sabritas',
-                  ),
+                  style: theme.textTheme.titleMedium,
+                  decoration: const InputDecoration(hintText: 'Ej. Coca-Cola, Sabritas'),
+                ),
+                const SizedBox(height: 32),
+
+                // --- PRECIOS Y STOCK ---
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const InputLabel(text: 'Precio de venta'),
+                          TextFormField(
+                            controller: _priceController,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            style: theme.textTheme.displayMedium?.copyWith(fontSize: 26, color: AppTheme.primaryColor),
+                            validator: (value) => _requiredNumberValidator(value, 'Ingresa el precio'),
+                            decoration: const InputDecoration(prefixText: '\$ ', hintText: '0.00'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const InputLabel(text: 'Costo de compra'),
+                          TextFormField(
+                            controller: _costController,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            style: theme.textTheme.displayMedium?.copyWith(fontSize: 26),
+                            validator: (value) => _requiredNumberValidator(value, 'Ingresa el costo'),
+                            decoration: const InputDecoration(prefixText: '\$ ', hintText: '0.00'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 24),
-                const InputLabel(text: 'Precio de venta'),
-                TextFormField(
-                  controller: _priceController,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    prefixText: '\$ ',
-                    hintText: '0.00',
-                  ),
-                  validator: (value) => _requiredNumberValidator(
-                    value,
-                    'Ingresa el precio de venta',
-                  ),
+
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const InputLabel(text: 'Stock inicial'),
+                          TextFormField(
+                            controller: _stockController,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                            validator: (value) => _requiredNumberValidator(value, 'Ingresa el stock'),
+                            decoration: const InputDecoration(hintText: '0'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const InputLabel(text: 'Stock mínimo'),
+                          TextFormField(
+                            controller: _minStockController,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                            validator: (value) => _requiredNumberValidator(value, 'Ingresa stock mín.'),
+                            decoration: const InputDecoration(hintText: '0'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 24),
-                const InputLabel(text: 'Costo de compra'),
-                TextFormField(
-                  controller: _costController,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    prefixText: '\$ ',
-                    hintText: '0.00',
-                  ),
-                  validator: (value) => _requiredNumberValidator(
-                    value,
-                    'Ingresa el costo de compra',
-                  ),
-                ),
-                const SizedBox(height: 24),
-                const InputLabel(text: 'Stock inicial'),
-                TextFormField(
-                  controller: _stockController,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    hintText: '0',
-                  ),
-                  validator: (value) => _requiredNumberValidator(
-                    value,
-                    'Ingresa el stock inicial',
-                  ),
-                ),
-                const SizedBox(height: 24),
-                const InputLabel(text: 'Stock mínimo'),
-                TextFormField(
-                  controller: _minStockController,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    hintText: '0',
-                  ),
-                  validator: (value) => _requiredNumberValidator(
-                    value,
-                    'Ingresa el stock mínimo',
-                  ),
-                ),
-                const SizedBox(height: 24),
+
+                // --- LÓGICA INTELIGENTE DE UNIDADES ---
                 const InputLabel(text: 'Unidad de venta'),
                 DropdownButtonFormField<String>(
                   value: _selectedUnitType,
-                  items: _unitOptions
-                      .map(
-                        (unit) => DropdownMenuItem<String>(
-                          value: unit['value'],
-                          child: Text(unit['label']!),
-                        ),
-                      )
-                      .toList(),
+                  icon: const Icon(Icons.keyboard_arrow_down, size: 28),
+                  style: theme.textTheme.titleMedium,
+                  items: _unitOptions.map((unit) => DropdownMenuItem<String>(
+                    value: unit['value'],
+                    child: Text(unit['label']!),
+                  )).toList(),
                   onChanged: (value) {
                     if (value == null) return;
                     setState(() {
                       _selectedUnitType = value;
+                      // LÓGICA INTELIGENTE: Autoselección de decimales
+                      if (['kg', 'g', 'lt', 'ml'].contains(value)) {
+                        _isWeighable = true; // Activa decimales
+                      } else {
+                        _isWeighable = false; // Desactiva decimales
+                      }
                     });
                   },
-                  decoration: const InputDecoration(
-                    hintText: 'Selecciona una unidad',
-                  ),
+                  decoration: const InputDecoration(hintText: 'Selecciona una unidad'),
                 ),
                 const SizedBox(height: 16),
+
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Producto pesable'),
-                  subtitle: const Text(
-                    'Actívalo para productos que se venden por peso.',
-                  ),
+                  title: Text('Venta a granel (Permite decimales)', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                  subtitle: Text('Actívalo si vas a vender fracciones de este producto (ej. 1.5 kg, 0.5 litros o media caja).', style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey[700])),
                   value: _isWeighable,
-                  onChanged: (value) {
-                    setState(() {
-                      _isWeighable = value;
-                    });
-                  },
+                  activeColor: AppTheme.primaryColor,
+                  onChanged: (value) => setState(() => _isWeighable = value),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 24),
+
+                // --- SECCIÓN IMAGEN ---
                 const InputLabel(text: 'Imagen del producto'),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
                 InkWell(
                   onTap: _showImageSourceSheet,
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(18),
                   child: Container(
                     width: double.infinity,
-                    height: 190,
+                    height: 220,
                     decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: Colors.grey.shade300),
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: Colors.grey.shade300, width: 2),
                     ),
                     child: _selectedImageFile != null
                         ? ClipRRect(
-                            borderRadius: BorderRadius.circular(14),
-                            child: Image.file(
-                              _selectedImageFile!,
-                              fit: BoxFit.cover,
-                            ),
+                            borderRadius: BorderRadius.circular(16),
+                            child: Image.file(_selectedImageFile!, fit: BoxFit.cover),
                           )
-                        : (!_removeDetectedImage &&
-                                widget.initialImageUrl != null &&
-                                widget.initialImageUrl!.isNotEmpty)
+                        : (!_removeDetectedImage && widget.initialImageUrl != null && widget.initialImageUrl!.isNotEmpty)
                             ? ClipRRect(
-                                borderRadius: BorderRadius.circular(14),
+                                borderRadius: BorderRadius.circular(16),
                                 child: Image.network(
                                   widget.initialImageUrl!,
                                   fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) {
-                                    return const _ImagePlaceholder();
-                                  },
+                                  errorBuilder: (_, __, ___) => const _ImagePlaceholder(),
                                 ),
                               )
                             : const _ImagePlaceholder(),
                   ),
                 ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                const SizedBox(height: 16),
+                
+                Row(
                   children: [
-                    OutlinedButton.icon(
-                      onPressed: _showImageSourceSheet,
-                      icon: const Icon(Icons.add_a_photo_outlined),
-                      label: const Text('Agregar o cambiar imagen'),
-                    ),
-                    if (_selectedImageFile != null ||
-                        (!_removeDetectedImage &&
-                            widget.initialImageUrl != null &&
-                            widget.initialImageUrl!.isNotEmpty))
-                      OutlinedButton.icon(
-                        onPressed: () {
-                          setState(() {
-                            _selectedImageFile = null;
-                            _removeDetectedImage = true;
-                          });
-                        },
-                        icon: const Icon(Icons.delete_outline),
-                        label: const Text('Quitar imagen'),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _showImageSourceSheet,
+                        icon: const Icon(Icons.add_a_photo_outlined, size: 24),
+                        label: const Text('Agregar o cambiar', style: TextStyle(fontWeight: FontWeight.bold)),
+                        style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
                       ),
+                    ),
+                    if (_selectedImageFile != null || (!_removeDetectedImage && widget.initialImageUrl != null && widget.initialImageUrl!.isNotEmpty)) ...[
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              _selectedImageFile = null;
+                              _removeDetectedImage = true;
+                            });
+                          },
+                          icon: const Icon(Icons.delete_outline, size: 24, color: Colors.red),
+                          label: const Text('Quitar imagen', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16), 
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            side: BorderSide(color: Colors.red.withValues(alpha: 0.3)),
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ],
@@ -664,10 +598,14 @@ class _AddProductPageState extends State<AddProductPage> {
           ),
         ),
       ),
-      bottomNavigationBar: PrimaryButton(
-        onPressed: _isSavingImage ? null : _submit,
-        icon: _isSavingImage ? Icons.hourglass_top : Icons.add_circle,
-        label: _isSavingImage ? 'Guardando imagen...' : 'Guardar producto',
+      bottomNavigationBar: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(color: theme.scaffoldBackgroundColor),
+        child: PrimaryButton(
+          onPressed: _isSavingImage ? null : _submit,
+          icon: _isSavingImage ? Icons.hourglass_top : Icons.add_circle,
+          label: _isSavingImage ? 'Guardando imagen...' : 'Guardar producto',
+        ),
       ),
     );
   }
@@ -682,26 +620,16 @@ class _ImagePlaceholder extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            Icons.image_outlined,
-            size: 42,
-            color: Colors.grey.shade400,
-          ),
-          const SizedBox(height: 10),
+          Icon(Icons.image_outlined, size: 64, color: Colors.grey.shade400),
+          const SizedBox(height: 16),
           Text(
             'Sin imagen',
-            style: TextStyle(
-              color: Colors.grey.shade600,
-              fontWeight: FontWeight.w600,
-            ),
+            style: TextStyle(color: Colors.grey.shade700, fontSize: 18, fontWeight: FontWeight.bold),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           Text(
             'Toca para agregar una foto',
-            style: TextStyle(
-              color: Colors.grey.shade500,
-              fontSize: 12,
-            ),
+            style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
           ),
         ],
       ),

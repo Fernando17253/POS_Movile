@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 
 abstract class PrinterEvent extends Equatable {
   const PrinterEvent();
@@ -13,17 +14,20 @@ class RefreshPrinterEvent extends PrinterEvent {}
 
 class ScanPrintersEvent extends PrinterEvent {}
 
-class ConnectPrinterEvent extends PrinterEvent {
-  final String mac;
-  final String name;
-
-  const ConnectPrinterEvent({required this.mac, required this.name});
-
-  @override
-  List<Object?> get props => [mac, name];
-}
+class CancelPrinterSearchEvent extends PrinterEvent {} // NUEVO
 
 class DisconnectPrinterEvent extends PrinterEvent {}
+
+class ForgetPrinterEvent extends PrinterEvent {} // NUEVO
+
+class ConnectPrinterEvent extends PrinterEvent {
+  final BluetoothInfo device; // Ahora recibe directamente el objeto BluetoothInfo
+
+  const ConnectPrinterEvent(this.device);
+
+  @override
+  List<Object?> get props => [device];
+}
 
 class TestPrintEvent extends PrinterEvent {
   final String shopName;
